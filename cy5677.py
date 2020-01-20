@@ -1,9 +1,3 @@
-"""
-    Usa la chiavetta omonima per collegarsi a dispositivi ble
-
-    Funziona anche con la CY5670 cambiando baud rate
-"""
-
 import struct
 import threading
 import queue
@@ -976,7 +970,6 @@ if __name__ == '__main__':
         """
         CODA_SR.put_nowait(_sr)
 
-    #DONGLE = CY5677(porta='com243')
     DONGLE = CY5677()
 
     def basta():
