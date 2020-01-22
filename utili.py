@@ -344,10 +344,15 @@ def esa_da_ba(ba, sep='-'):
     """
 
     esa = ''
-    for i in range(len(ba) - 1):
-        esa += '%02X' % ba[i]
-        esa += sep
-    esa += '%02X' % ba[len(ba) - 1]
+    if len(ba) == 0:
+        pass
+    elif len(ba) == 1:
+        esa += '%02X' % ba[0]
+    else:
+        for i in range(len(ba) - 1):
+            esa += '%02X' % ba[i]
+            esa += sep
+        esa += '%02X' % ba[len(ba) - 1]
 
     return esa
 
