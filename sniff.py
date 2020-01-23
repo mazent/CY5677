@@ -2,7 +2,7 @@ import struct
 import sys
 
 import utili
-from cycost import DESC_EVN, GRUPPO_0, GRUPPO_2, GRUPPO_4, GRUPPO_5
+from cycost import quale_comando, quale_evento
 
 
 def leggi_dati(riga):
@@ -37,6 +37,7 @@ def stampa(cosa, dove, proto_rx, proto_tx):
 
     dove.write('\n')
 
+
 class PROTO:
 
     def __init__(self, nome, primo, secondo):
@@ -60,42 +61,31 @@ class PROTO:
     def dammi_msg(self):
         if any(self.lista_msg):
             return self.lista_msg.pop(0)
-        else:
-            return None
 
-    def dammi_resto(self):
-        if any(self.parz):
-            resto = bytearray(self.parz)
-            self.parz = bytearray()
-            return resto
-        else:
-            return None
+        return None
 
     def esamina(self, questi):
-        for elem in questi:
-            if elem == self.primo:
+        for cosa in questi:
+            if cosa == self.primo:
                 self.stato = 'quasi'
-            elif elem == self.secondo:
+            elif cosa == self.secondo:
                 if self.stato == 'quasi':
                     if any(self.parz):
                         self.lista_msg.append(bytearray(self.parz))
                         self.reiniz()
                     self.stato = 'msg'
                 else:
-                    self.parz.append(elem)
+                    self.parz.append(cosa)
             else:
                 if self.stato == 'quasi':
                     self.parz.append(self.primo)
                     self.stato = 'attesa'
-                self.parz.append(elem)
+                self.parz.append(cosa)
 
                 self.controlla()
 
     def controlla(self):
         pass
-
-    def interpreta(self, cosa=None):
-        return 0, 0, cosa
 
 
 class PROTO_RX(PROTO):
@@ -106,7 +96,7 @@ class PROTO_RX(PROTO):
     def controlla(self):
         if self.dim < 0:
             if len(self.parz) == 4:
-                tot, msg = struct.unpack('<2H', self.parz[:4])
+                tot, _ = struct.unpack('<2H', self.parz[:4])
                 self.dim = tot + 2
 
         if self.dim == len(self.parz):
@@ -116,7 +106,6 @@ class PROTO_RX(PROTO):
         else:
             pass
 
-
     def interpreta(self, cosa):
         if len(cosa) >= 4:
             tot, msg = struct.unpack('<2H', cosa[:4])
@@ -125,22 +114,22 @@ class PROTO_RX(PROTO):
 
             if tot != len(prm):
                 print(self.nome +
-                    ' ERR DIM {:04X}[{} != {}]: '.format(msg, tot, len(
-                        prm)) + utili.esa_da_ba(prm, ' '))
+                      ' ERR DIM {:04X}[{} != {}]: '.format(msg, tot, len(
+                          prm)) + utili.esa_da_ba(prm, ' '))
             else:
-                print(self.nome +
-                    ' {:04X}[{}]: '.format(msg, tot) + utili.esa_da_ba(prm, ' '))
+                print(
+                    self.nome +
+                    ' {:04X}[{}]: '.format(
+                        msg,
+                        tot) +
+                    utili.esa_da_ba(
+                        prm,
+                        ' '))
 
             return msg, tot, prm
-        else:
-            print(self.nome + ' ????: ' + utili.esa_da_ba(cosa, ' '))
-            return 0, 0, cosa
 
-    def quale_evento(self, evn):
-        if evn in DESC_EVN:
-            return DESC_EVN[evn]
-        else:
-            return 'EVN {:04X}'.format(evn)
+        print(self.nome + ' ????: ' + utili.esa_da_ba(cosa, ' '))
+        return 0, 0, cosa
 
     def stampa(self, cosa):
         risul = self.nome + ' '
@@ -149,12 +138,14 @@ class PROTO_RX(PROTO):
             prm = cosa[4:]
             tot -= 2
 
-            risul += self.quale_evento(msg) + ' '
+            risul += quale_evento(msg) + ' '
 
             if tot != len(prm):
-                risul += 'ERR DIM [{} != {}]: '.format(tot, len(prm)) + '\n\t' + utili.esa_da_ba(prm, ' ')
+                risul += 'ERR DIM [{} != {}]: '.format(
+                    tot, len(prm)) + '\n\t' + utili.esa_da_ba(prm, ' ')
             else:
-                risul += '[{}]: '.format(tot) + '\n\t' + utili.esa_da_ba(prm, ' ')
+                risul += '[{}]: '.format(tot) + '\n\t' + \
+                    utili.esa_da_ba(prm, ' ')
         else:
             risul += '????: ' + '\n\t' + utili.esa_da_ba(cosa, ' ')
 
@@ -169,7 +160,7 @@ class PROTO_TX(PROTO):
     def controlla(self):
         if self.dim < 0:
             if len(self.parz) == 4:
-                msg, tot = struct.unpack('<2H', self.parz[:4])
+                _, tot = struct.unpack('<2H', self.parz[:4])
                 self.dim = tot + 4
 
         if self.dim == len(self.parz):
@@ -186,31 +177,22 @@ class PROTO_TX(PROTO):
 
             if tot != len(prm):
                 print(self.nome +
-                    ' ERR DIM {:04X}[{} != {}]: '.format(msg, tot, len(
-                        prm)) + utili.esa_da_ba(prm, ' '))
+                      ' ERR DIM {:04X}[{} != {}]: '.format(msg, tot, len(
+                          prm)) + utili.esa_da_ba(prm, ' '))
             else:
-                print(self.nome +
-                    ' {:04X}[{}]: '.format(msg, tot) + utili.esa_da_ba(prm, ' '))
+                print(
+                    self.nome +
+                    ' {:04X}[{}]: '.format(
+                        msg,
+                        tot) +
+                    utili.esa_da_ba(
+                        prm,
+                        ' '))
 
             return msg, tot, prm
-        else:
-            print(self.nome + ' ????: ' + utili.esa_da_ba(cosa, ' '))
-            return 0, 0, cosa
 
-    def quale_comando(self, cmd):
-        gruppo = (cmd >> 7) & 7
-        comando = cmd & 0x7F
-        funz = '{:04X}'.format(cmd)
-        if gruppo == 0:
-            funz = GRUPPO_0[comando] + ' ' + funz
-        elif gruppo == 2:
-            funz = GRUPPO_2[comando] + ' ' + funz
-        elif gruppo == 4:
-            funz = GRUPPO_4[comando] + ' ' + funz
-        elif gruppo == 5:
-            funz = GRUPPO_5[comando] + ' ' + funz
-        return funz
-
+        print(self.nome + ' ????: ' + utili.esa_da_ba(cosa, ' '))
+        return 0, 0, cosa
 
     def stampa(self, cosa):
         risul = self.nome + ' '
@@ -218,62 +200,67 @@ class PROTO_TX(PROTO):
             msg, tot = struct.unpack('<2H', cosa[:4])
             prm = cosa[4:]
 
-            risul += self.quale_comando(msg) + ' '
+            risul += quale_comando(msg) + ' '
 
             if tot != len(prm):
                 risul += 'ERR DIM [{} != {}]: '.format(tot, len(
                     prm)) + '\n\t' + utili.esa_da_ba(prm, ' ')
             else:
-                risul += '[{}]: '.format(tot) + '\n\t' + utili.esa_da_ba(prm, ' ')
+                risul += '[{}]: '.format(tot) + '\n\t' + \
+                    utili.esa_da_ba(prm, ' ')
         else:
             risul += '????: ' + '\n\t' + utili.esa_da_ba(cosa, ' ')
 
         return risul
+
+def estrai(oper, proto, lista):
+    while True:
+        msg = proto.dammi_msg()
+        if msg is None:
+            break
+        else:
+            lista.append((oper, msg))
+
 
 def leggi_ingresso(nfile, proto_rx, proto_tx):
     lista_op = []
     with open(nfile, 'rt') as ing:
         while True:
             riga = ing.readline()
-            if any(riga):
-                if 'IRP_MJ_WRITE' in riga:
-                    dati = leggi_dati(riga)
-
-                    proto_tx.esamina(dati)
-                    while True:
-                        tx = proto_tx.dammi_msg()
-                        if tx is None:
-                            break
-                        else:
-                            w = ('w', tx)
-                            lista_op.append(w)
-                elif 'IRP_MJ_READ' in riga:
-                    dati = leggi_dati(riga)
-                    if dati is not None:
-                        proto_rx.esamina(dati)
-                        while True:
-                            rx = proto_rx.dammi_msg()
-                            if rx is None:
-                                break
-                            else:
-                                r = ('r', rx)
-                                lista_op.append(r)
-                elif 'IRP_MJ_CREATE' in riga:
-                    lista_op.append(('o',))
-                elif 'IOCTL_SERIAL_SET_BAUD_RATE' in riga:
-                    pos = riga.find('Baud Rate:')
-                    if pos == -1:
-                        continue
-
-                    pos += len('Baud Rate:')
-                    riga = riga[pos:]
-                    lista_op.append(('b', int(riga)))
-                elif 'IRP_MJ_CLOSE' in riga:
-                    lista_op.append(('c',))
-                else:
-                    pass
-            else:
+            if not any(riga):
                 break
+
+            if 'IRP_MJ_WRITE' in riga:
+                dati = leggi_dati(riga)
+
+                proto_tx.esamina(dati)
+                estrai('w', proto_tx, lista_op)
+                continue
+
+            if 'IRP_MJ_READ' in riga:
+                dati = leggi_dati(riga)
+                if dati is not None:
+                    proto_rx.esamina(dati)
+                    estrai('r', proto_rx, lista_op)
+                continue
+
+            if 'IRP_MJ_CREATE' in riga:
+                lista_op.append(('o',))
+                continue
+
+            if 'IOCTL_SERIAL_SET_BAUD_RATE' in riga:
+                pos = riga.find('Baud Rate:')
+                if pos == -1:
+                    continue
+
+                pos += len('Baud Rate:')
+                riga = riga[pos:]
+                lista_op.append(('b', int(riga)))
+                continue
+
+            if 'IRP_MJ_CLOSE' in riga:
+                lista_op.append(('c',))
+                continue
     return lista_op
 
 
