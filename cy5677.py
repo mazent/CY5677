@@ -1,25 +1,27 @@
+import queue
 import struct
 import threading
-import queue
 
 import serial
+
 import utili
 
 BAUD_CY5670 = 115200
 BAUD_CY5677 = 921600
 
 # py -> cy5677
-_HEADER_CMD = 0x5943
 
-_CMD_INIT_BLE_STACK = 0xFC07
+
+Cmd_Init_Ble_Stack_Api = 0xFC07
 _CMD_START_SCAN = 0xFE93
 _CMD_STOP_SCAN = 0xFE94
-_CMD_ESTABLISH_CONNECTION = 0xFE97
+Cmd_Establish_Connection_Api = 0xFE97
 _CMD_TERMINATE_CONNECTION = 0xFE98
 _CMD_EXCHANGE_GATT_MTU_SIZE = 0xFE12
 _CMD_READ_CHAR_VALUE = 0xFE06
 _CMD_READ_LONG_CHARACTERISTIC_VALUES = 0xFE08
 _CMD_READ_CHAR_DESCRIPTOR = 0xFE0E
+Cmd_Initiate_Pairing_Request_Api = 0xFE99
 
 _CMD_GATT_WRITECHARVAL_WR = (4 << 7) + 10
 _CMD_GATT_WRITECHARVAL = (4 << 7) + 11
@@ -41,6 +43,7 @@ _EVT_CONN_TERM_NOTIF = 0x0690
 _EVT_READ_CHAR_DESC_RESP = 0x060A
 _EVT_READ_CHAR_VALUE_RESP = 0x0606
 _EVT_READ_LONG_CHAR_VALUE_RESP = 0x0608
+_EVT_PAIRING_REQUEST_RECEIVED_NOTIFICATION = 0x0692
 
 _DESC_EVT = {
     0x068A: 'Scan Progress Result',
@@ -62,114 +65,11 @@ def _evt_cmd_sttcmplt(rsp):
     rsp['stt'] = stt
 
 
-class PROTO():
-    """
-    Incapsula il protocollo di comunicazione (risposte)
-    """
-
-    def _testa(self):
-        estratti = False
-        if len(self.esamina) >= 6:
-            rx = self.esamina[:6]
-            self.esamina = self.esamina[6:]
-            estratti = True
-
-            hrsp, tot, evt = struct.unpack('<3H', rx)
-            if hrsp != _HEADER_RSP:
-                print('err hrsp <{}>'.format(rx.hex()))
-            elif tot == 2:
-                self.rsp = {
-                    'evt': evt
-                }
-            else:
-                self.prz = {
-                    'evt': evt,
-                    'tot': tot - 2,
-                    'altro': b''
-                }
-                self.stato = 1
-        return estratti
-
-    def _dati(self):
-        dim = min(self.prz['tot'], len(self.esamina))
-        if dim == 0:
-            return False
-
-        self.prz['altro'] += self.esamina[:dim]
-        self.esamina = self.esamina[dim:]
-        self.prz['tot'] -= dim
-        if self.prz['tot'] == 0:
-            del self.prz['tot']
-            self.rsp = self.prz
-            self.stato = 0
-        return True
-
-    def __init__(self):
-        self.esamina = b''
-        self.stati = {
-            0: self._testa,
-            1: self._dati
-        }
-        self.stato = 0
-        self.prz = None
-        self.rsp = None
-
-    def da_esaminare(self, dati):
-        """
-        passa la protocollo la roba
-        :param dati: la roba
-        :return: nulla
-        """
-        # print(dati.hex())
-        self.esamina += dati
-
-    def risposta(self):
-        """
-        estrae una risposta dai dati raccolti (se possibile)
-        :return: la risposta o None
-        """
-        while any(self.esamina) and self.rsp is None:
-            if not self.stati[self.stato]():
-                break
-
-        if self.rsp is not None:
-            # provo a vedere il tipo di evento
-            LISTA = {
-                _EVT_COMMAND_STATUS: _evt_cmd_sttcmplt,
-                _EVT_COMMAND_COMPLETE: _evt_cmd_sttcmplt
-            }
-            try:
-                LISTA[self.rsp['evt']](self.rsp)
-            except KeyError:
-                # print(self.rsp)
-                pass
-
-        rsp = self.rsp
-        self.rsp = None
-        return rsp
-
-
 class CY5677(threading.Thread):
     """
         Fornisce i comandi di base per la comunicazione ble
     """
 
-    @staticmethod
-    def _componi(cmd, prm=None):
-        """
-        crea un comando
-        :param cmd: codice del comando
-        :param prm: eventuali dati
-        :return: i byte del messaggio da spedire
-        """
-        dim = 0
-        if prm is not None:
-            dim = len(prm)
-        msg = struct.pack('<3H', _HEADER_CMD, cmd, dim)
-        if dim:
-            msg += prm
-
-        return msg
 
     def _risposta(self):
         """
@@ -179,8 +79,10 @@ class CY5677(threading.Thread):
         while True:
             # almeno fino all'evento
             rx = self.uart.read(6)
-            if not any(rx):
+            if len(rx) == 0:
                 return None
+
+            print('IRP_MJ_READ Data: ' + utili.esa_da_ba(rx, ' '))
 
             if len(rx) < 6:
                 print('err < 6 <{}>'.format(rx.hex()))
@@ -201,11 +103,12 @@ class CY5677(threading.Thread):
                 altro = b''
                 while True:
                     letti = self.uart.read(tot)
-                    if not any(letti):
+                    if len(letti) == 0:
                         print(
                             'attesi {} ricevuti 0 <{}.{}>'.format(
                                 tot, rx.hex(), altro.hex()))
                         return None
+                    print('IRP_MJ_READ Data: ' + utili.esa_da_ba(letti, ' '))
                     altro += letti
                     if len(letti) == tot:
                         break
@@ -247,11 +150,47 @@ class CY5677(threading.Thread):
             print(
                 '_EVT_CONNECTION_TERMINATED_NOTIFICATION: err conn handle')
 
-    def _evita_stampa(self, _):
-        pass
+    def _enhanced_connection_complete(self, _):
+        """
+        EVT_ENHANCED_CONNECTION_COMPLETE [34]: evento inutile
+        97 FE               comando
+        00 					connParam->status
+        04 00 				cyBle_connHandle
+        00 					connParam->role
+        00 					connParam->masterClockAccuracy
+        2D A4 C4 50 A0 00 	connParam->peerBdAddr
+        00 					connParam->peerBdAddrType
+        00 00 00 00 00 00 	connParam->localResolvablePvtAddr
+        01 					addrType (dummy)
+        00 00 00 00 00 00 	connParam->peerResolvablePvtAddr
+        01 	  				addrType (dummy)
+        07 00 				connParam->connIntv
+        00 00 				connParam->connLatency
+        0A 00 				connParam->supervisionTo
+        """
+
+    def _cyble_evt_gap_auth_req(self, rsp):
+        """
+        EVT_PAIRING_REQUEST_RECEIVED_NOTIFICATION [7]: inutile
+        04 00 	cyBle_connHandle
+                CYBLE_GAP_AUTH_INFO_T
+        02 		security
+        00 		bonding
+        07 		ekeySize
+        00 		authErr
+        00		pairingProperties
+        """
+        _, security, bonding, ekeySize, _, pairingProperties = struct.unpack('<H5B', rsp['altro'])
+        prm = {
+            'security': security,
+            'bonding': bonding,
+            'ekeySize': ekeySize,
+            'pairingProperties': pairingProperties
+        }
+        self.evt_gap_auth_req(prm)
 
     def _command_status(self, rsp):
-        if rsp['cmd'] == _CMD_START_SCAN:
+        if rsp['cmd'] in (_CMD_START_SCAN, Cmd_Initiate_Pairing_Request_Api):
             self._fine_comando()
 
     def _command_complete(self, rsp):
@@ -380,10 +319,10 @@ class CY5677(threading.Thread):
 
     def __init__(self, BAUD=BAUD_CY5677, poll=0.1, porta=None):
         self._ESEGUI_CMD = {
-            _CMD_INIT_BLE_STACK: self._init_ble,
+            Cmd_Init_Ble_Stack_Api: self._init_ble,
             _CMD_START_SCAN: self._scanna,
             _CMD_STOP_SCAN: self._non_scannare,
-            _CMD_ESTABLISH_CONNECTION: self._connetti,
+            Cmd_Establish_Connection_Api: self._connetti,
             _CMD_TERMINATE_CONNECTION: self._sconnetti,
             _CMD_EXCHANGE_GATT_MTU_SIZE: self._mtu,
             _CMD_READ_CHAR_DESCRIPTOR: self._read_car_desc,
@@ -396,7 +335,7 @@ class CY5677(threading.Thread):
 
         self.EVENTI = {
             _EVT_ESTABLISH_CONN_RESP: self._establish_conn_resp,
-            _EVT_ENHANCED_CONN_COMP: self._evita_stampa,
+            _EVT_ENHANCED_CONN_COMP: self._enhanced_connection_complete,
             _EVT_DATA_LEN_CHG_NOTIF: self._data_len_chg_notif,
             _EVT_CONN_TERM_NOTIF: self._conn_term_notif,
             _EVT_COMMAND_STATUS: self._command_status,
@@ -407,7 +346,8 @@ class CY5677(threading.Thread):
             _EVT_READ_CHAR_VALUE_RESP: self._read_char_value_resp,
             _EVT_READ_LONG_CHAR_VALUE_RESP: self._read_long_char_value_resp,
             _EVT_SCAN_PROGRESS_RESULT: self._scan_progress_result,
-            _EVT_SCAN_STOPPED_NOTIFICATION: self._scan_stopped_notification
+            _EVT_SCAN_STOPPED_NOTIFICATION: self._scan_stopped_notification,
+            _EVT_PAIRING_REQUEST_RECEIVED_NOTIFICATION: self._cyble_evt_gap_auth_req
         }
 
         self.scan_cb = None
@@ -415,24 +355,19 @@ class CY5677(threading.Thread):
         self.proto = PROTO()
 
         try:
+            serial_open = serial.Serial
             if porta is None:
-                self.uart = serial.serial_for_url(
-                    'hwgrep://04B4:F139',
-                    baudrate=BAUD,
-                    bytesize=serial.EIGHTBITS,
-                    parity=serial.PARITY_NONE,
-                    stopbits=serial.STOPBITS_ONE,
-                    timeout=1,
-                    rtscts=True)
-            else:
-                self.uart = serial.Serial(
-                    porta,
-                    baudrate=BAUD,
-                    bytesize=serial.EIGHTBITS,
-                    parity=serial.PARITY_NONE,
-                    stopbits=serial.STOPBITS_ONE,
-                    timeout=1,
-                    rtscts=True)
+                porta = 'hwgrep://04B4:F139'
+                serial_open = serial.serial_for_url
+
+            self.uart = serial_open(
+                porta,
+                baudrate=BAUD,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=1,
+                rtscts=True)
 
             self.mtu = 23
             self.cmd_corr = None
@@ -441,7 +376,7 @@ class CY5677(threading.Thread):
 
             self.coda_cmd = queue.Queue()
             # mando io il comando che inizializza
-            self.coda_cmd.put_nowait((_CMD_INIT_BLE_STACK, None))
+            self.coda_cmd.put_nowait((Cmd_Init_Ble_Stack_Api, None))
 
             # posso girare
             threading.Thread.__init__(self)
@@ -456,8 +391,8 @@ class CY5677(threading.Thread):
 
     def _init_ble(self):
         # inizializzo
-        cmd = _CMD_INIT_BLE_STACK
-        msg = self._componi(cmd)
+        cmd = Cmd_Init_Ble_Stack_Api
+        msg = self.proto.componi(cmd)
 
         self.uart.flushInput()
         self.uart.write(msg)
@@ -468,8 +403,8 @@ class CY5677(threading.Thread):
         self._evn_cmd_XXX(cmd, rsp, _EVT_COMMAND_COMPLETE)
 
     def _connetti(self, prm):
-        cod = _CMD_ESTABLISH_CONNECTION
-        msg = self._componi(cod, prm[0])
+        cod = Cmd_Establish_Connection_Api
+        msg = self.proto.componi(cod, prm[0])
 
         self.cmd_corr = (cod, prm[1])
 
@@ -477,7 +412,7 @@ class CY5677(threading.Thread):
 
     def _sconnetti(self, prm):
         cod = _CMD_TERMINATE_CONNECTION
-        msg = self._componi(cod, self.cyBle_connHandle)
+        msg = self.proto.componi(cod, self.cyBle_connHandle)
 
         self.cmd_corr = (cod, prm)
 
@@ -485,7 +420,7 @@ class CY5677(threading.Thread):
 
     def _scrivi(self, prm):
         cod = _CMD_GATT_WRITECHARVAL
-        msg = self._componi(cod, prm[0])
+        msg = self.proto.componi(cod, prm[0])
 
         self.cmd_corr = (cod, prm[1])
 
@@ -493,7 +428,7 @@ class CY5677(threading.Thread):
 
     def _scrivi_wr(self, prm):
         cod = _CMD_GATT_WRITECHARVAL_WR
-        msg = self._componi(cod, prm[0])
+        msg = self.proto.componi(cod, prm[0])
 
         self.cmd_corr = (cod, prm[1])
 
@@ -501,7 +436,7 @@ class CY5677(threading.Thread):
 
     def _scrivi_lungo(self, prm):
         cod = _CMD_GATT_WRITE_LONG
-        msg = self._componi(cod, prm[0])
+        msg = self.proto.componi(cod, prm[0])
 
         self.cmd_corr = (cod, prm[1])
 
@@ -511,7 +446,7 @@ class CY5677(threading.Thread):
         cod = _CMD_EXCHANGE_GATT_MTU_SIZE
         tmp = bytearray(self.cyBle_connHandle)
         tmp += prm[0]
-        msg = self._componi(cod, tmp)
+        msg = self.proto.componi(cod, tmp)
 
         self.cmd_corr = (cod, prm[1])
         self.uart.write(msg)
@@ -520,7 +455,7 @@ class CY5677(threading.Thread):
         cod = _CMD_READ_CHAR_DESCRIPTOR
         tmp = bytearray(self.cyBle_connHandle)
         tmp += prm[0]
-        msg = self._componi(cod, tmp)
+        msg = self.proto.componi(cod, tmp)
 
         self.cmd_corr = (cod, prm[1])
         self.uart.write(msg)
@@ -529,7 +464,7 @@ class CY5677(threading.Thread):
         cod = _CMD_READ_CHAR_VALUE
         tmp = bytearray(self.cyBle_connHandle)
         tmp += prm[0]
-        msg = self._componi(cod, tmp)
+        msg = self.proto.componi(cod, tmp)
 
         self.cmd_corr = (cod, prm[1])
         self.uart.write(msg)
@@ -538,14 +473,14 @@ class CY5677(threading.Thread):
         cod = _CMD_READ_LONG_CHARACTERISTIC_VALUES
         tmp = bytearray(self.cyBle_connHandle)
         tmp += prm[0]
-        msg = self._componi(cod, tmp)
+        msg = self.proto.componi(cod, tmp)
 
         self.cmd_corr = (cod, prm[1], bytearray())
         self.uart.write(msg)
 
     def _scanna(self, prm):
         cod = _CMD_START_SCAN
-        msg = self._componi(cod)
+        msg = self.proto.componi(cod)
 
         self.scan_cb = prm[0]
         self.cmd_corr = (cod, prm[1])
@@ -553,7 +488,7 @@ class CY5677(threading.Thread):
 
     def _non_scannare(self, prm):
         cod = _CMD_STOP_SCAN
-        msg = self._componi(cod)
+        msg = self.proto.componi(cod)
 
         self.cmd_corr = (cod, prm)
         self.uart.write(msg)
@@ -595,7 +530,7 @@ class CY5677(threading.Thread):
             # polling della seriale
             while self.uart.in_waiting:
                 tmp = self.uart.read(self.uart.in_waiting)
-                if not any(tmp):
+                if len(tmp) == 0:
                     break
                 self.proto.da_esaminare(tmp)
 
@@ -688,7 +623,7 @@ class CY5677(threading.Thread):
         except queue.Empty:
             return False
 
-    def connect(self, strmac):
+    def connect(self, strmac, public=True):
         """
         tenta di connettersi al dispositivo indicato
         :param strmac: indirizzo umano (ascii, rovescio)
@@ -699,10 +634,9 @@ class CY5677(threading.Thread):
 
         _mac = utili.mac_da_str(strmac)
 
-        # Connectable undirected advertising
-        _mac.append(0)
+        _mac.append(0 if public else 1)
 
-        cod = _CMD_ESTABLISH_CONNECTION
+        cod = Cmd_Establish_Connection_Api
         esito = queue.Queue()
         prm = (_mac, esito)
         self.coda_cmd.put_nowait((cod, prm))
@@ -742,6 +676,28 @@ class CY5677(threading.Thread):
         :return: mtu
         """
         return self.mtu
+
+    def gap_auth_req(self):
+        """
+        Initiate authentication procedure
+
+        Used after receiving CYBLE_EVT_GAP_AUTH_REQ
+        :return: bool
+        """
+        if self.cyBle_connHandle is None:
+            return False
+
+        cod = Cmd_Initiate_Pairing_Request_Api
+        esito = queue.Queue()
+        self.coda_cmd.put_nowait((cod, esito))
+
+        try:
+            _ = esito.get(True, 5)
+
+            return self.cyBle_connHandle is None
+        except queue.Empty:
+            print('disc timeout!!')
+            return False
 
     def disconnect(self):
         """
@@ -904,6 +860,25 @@ class CY5677(threading.Thread):
         """
         print('[{:04X}] -> {}'.format(rsp['crt'], rsp['ntf'].decode('ascii')))
 
+    def evt_gap_auth_req(self, prm):
+        """
+        Override this method to receive CYBLE_EVT_GAP_AUTH_REQ
+
+        Central needs to call CyBle_GappAuthReq() to initiate authentication procedure
+
+        :param prm: dictionary with keys:
+                    'security'              CYBLE_GAP_AUTH_INFO_T.security
+                    'bonding'               CYBLE_GAP_AUTH_INFO_T.bonding
+                    'ekeySize'              CYBLE_GAP_AUTH_INFO_T.ekeySize
+                    'pairingProperties'     CYBLE_GAP_AUTH_INFO_T.pairingProperties
+        :return: None
+        """
+        print('CYBLE_EVT_GAP_AUTH_REQ: ')
+        print('\tsecurity={:02X}'.format(prm['security']))
+        print('\tbonding={}'.format(prm['bonding']))
+        print('\tekeySize={}'.format(prm['ekeySize']))
+        print('\tpairingProperties={}'.format(prm['pairingProperties']))
+
 
 if __name__ == '__main__':
     # Esempio di uso: scansione
@@ -1008,7 +983,7 @@ if __name__ == '__main__':
 
         TO.termina()
 
-        if any(lista):
+        if len(lista):
             lista2 = {}
             for mac, lrssi in lista.items():
                 rssi = 0.0
@@ -1029,3 +1004,109 @@ if __name__ == '__main__':
         print(err)
 
     DONGLE.chiudi()
+
+
+class PROTO:
+    """
+    Incapsula il protocollo di comunicazione (risposte)
+    """
+    _HEADER_CMD = 0x5943
+
+    def _testa(self):
+        estratti = False
+        if len(self.esamina) >= 6:
+            rx = self.esamina[:6]
+            self.esamina = self.esamina[6:]
+            estratti = True
+
+            hrsp, tot, evt = struct.unpack('<3H', rx)
+            if hrsp != _HEADER_RSP:
+                print('err hrsp <{}>'.format(rx.hex()))
+            elif tot == 2:
+                self.rsp = {
+                    'evt': evt
+                }
+            else:
+                self.prz = {
+                    'evt': evt,
+                    'tot': tot - 2,
+                    'altro': b''
+                }
+                self.stato = 1
+        return estratti
+
+    def _dati(self):
+        dim = min(self.prz['tot'], len(self.esamina))
+        if dim == 0:
+            return False
+
+        self.prz['altro'] += self.esamina[:dim]
+        self.esamina = self.esamina[dim:]
+        self.prz['tot'] -= dim
+        if self.prz['tot'] == 0:
+            del self.prz['tot']
+            self.rsp = self.prz
+            self.stato = 0
+        return True
+
+    def __init__(self):
+        self.esamina = b''
+        self.stati = {
+            0: self._testa,
+            1: self._dati
+        }
+        self.stato = 0
+        self.prz = None
+        self.rsp = None
+
+    def da_esaminare(self, dati):
+        """
+        passa la protocollo la roba
+        :param dati: la roba
+        :return: nulla
+        """
+        print('IRP_MJ_READ Data: ' + utili.esa_da_ba(dati, ' '))
+        self.esamina += dati
+
+    def risposta(self):
+        """
+        estrae una risposta dai dati raccolti (se possibile)
+        :return: la risposta o None
+        """
+        while len(self.esamina) and self.rsp is None:
+            if not self.stati[self.stato]():
+                break
+
+        if self.rsp is not None:
+            # provo a vedere il tipo di evento
+            LISTA = {
+                _EVT_COMMAND_STATUS: _evt_cmd_sttcmplt,
+                _EVT_COMMAND_COMPLETE: _evt_cmd_sttcmplt
+            }
+            try:
+                LISTA[self.rsp['evt']](self.rsp)
+            except KeyError:
+                # print(self.rsp)
+                pass
+
+        rsp = self.rsp
+        self.rsp = None
+        return rsp
+
+    def componi(self, cmd, prm=None):
+        """
+        crea un comando
+        :param cmd: codice del comando
+        :param prm: eventuali dati
+        :return: i byte del messaggio da spedire
+        """
+        dim = 0
+        if prm is not None:
+            dim = len(prm)
+        msg = struct.pack('<3H', PROTO._HEADER_CMD, cmd, dim)
+        if dim:
+            msg += prm
+
+        print('IRP_MJ_WRITE Data: ' + utili.esa_da_ba(msg, ' '))
+
+        return msg
