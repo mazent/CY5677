@@ -27,7 +27,7 @@ If you run the script, it scans for ble devices printing the list
 `CyBle_Start` is called at the beginning passing `CapSenseClientEventHandler` and
 when executing `Cmd_Init_Ble_Stack_Api`, this time with `CyS_GenericEventHandler`, that
 forwards events to the pc. `Cmd_Init_Ble_Stack_Api` calls `CyBle_Stop`, so 
-you can invoke it whenever you want. This command is sent when you create `CY5677`
+you can invoke it whenever you want. 
 
 ### Serialization
 

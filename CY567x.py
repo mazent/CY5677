@@ -17,10 +17,11 @@ BAUD_CY5677 = 921600
 
 class _COMMAND:
 
-    def __init__(self, cmd, prm=None):
+    def __init__(self, cmd, prm=None, cb=None):
         self.cod = cmd
         self.prm = prm
         self.resul = queue.Queue()
+        self.cb = cb
 
     def result(self, to=5):
         """
@@ -33,18 +34,55 @@ class _COMMAND:
         except queue.Empty:
             return None
 
+ADVERTISEMENT_EVENT_TYPE = {
+    0x00: 'Connectable undirected advertising',
+    0x01: 'Connectable directed advertising',
+    0x02: 'Scannable undirected advertising',
+    0x03: 'Non connectable undirected advertising',
+    0x04: 'Scan Response'
+}
+
+ADDRESS_TYPE = {
+    0x00: 'Public Device Address',
+    0x01: 'Random Device Address',
+    0x02: 'Public Resolvable Address',
+    0x03: 'Random Resolvable Address'
+}
+
+def scan_report(adv):
+    """
+    utility to decompose an advertise (cfr Send_advt_report)
+    :param adv: bytearray
+    :return: scan report
+    """
+    sr = {
+        'adv_type': ADVERTISEMENT_EVENT_TYPE[adv[0]],
+        'bda': utili.str_da_mac(adv[1:7])
+    }
+
+    bda_type, rssi, dim = struct.unpack('<BbB', adv[7:10])
+    sr['bda_type'] = ADDRESS_TYPE[bda_type]
+    sr['rssi'] = rssi
+    sr['data'] = adv[10:]
+    if len(sr['data']) != dim:
+        sr['err'] = 'dim'
+
+    return sr
+
 
 class CY567x(threading.Thread):
     """
     manages two cypress dongles: CY5677 and CY5670 (old)
     """
+    # internal commands
     QUIT = 0xE5C1
     ABORT_CURRENT_COMMAND = 0xACC0
+    # dongle commands
     Cmd_Init_Ble_Stack_Api = 0xFC07
+    Cmd_Start_Scan_Api = 0xFE93
+    Cmd_Stop_Scan_Api = 0xFE94
 
     def __init__(self, BAUD=BAUD_CY5677, poll=0.1, porta=None):
-        #self.scan_cb = None
-        self.poll = poll
         self.proto = {
             'rx': prt.PROTO_RX(),
             'tx': prt.PROTO_TX()
@@ -52,7 +90,20 @@ class CY567x(threading.Thread):
 
         self.events = {
             cc.EVT_COMMAND_STATUS: self._evt_command_status,
-            cc.EVT_COMMAND_COMPLETE: self._evt_command_complete
+            cc.EVT_COMMAND_COMPLETE: self._evt_command_complete,
+            cc.EVT_SCAN_PROGRESS_RESULT: self._evt_scan_progress_result
+        }
+
+        self.connection = {
+            'mtu': 23,
+            'cyBle_connHandle': None
+        }
+
+        self.command = {
+            'curr': None,
+            'todo': queue.Queue(),
+            'poll': poll,
+            'cb': None
         }
 
         try:
@@ -70,18 +121,6 @@ class CY567x(threading.Thread):
                 timeout=1,
                 rtscts=True)
 
-            self.connection = {
-                'mtu': 23,
-                'cyBle_connHandle': None
-            }
-
-            self.curr_cmd = None
-
-            self.cmd_queue = queue.Queue()
-
-            # # mando io il comando che inizializza
-            # self.coda_cmd.put_nowait((Cmd_Init_Ble_Stack_Api, None))
-
             # posso girare
             threading.Thread.__init__(self)
             self.start()
@@ -94,62 +133,83 @@ class CY567x(threading.Thread):
         print('del')
         self.close()
 
+    def _close_command(self, cod, resul):
+        if self.command['curr'] is None:
+            print('no cmd waiting')
+        elif self.command['curr'].cod == cod:
+            self.command['curr'].resul.put_nowait(resul == 0)
+            self.command['curr'] = None
+        else:
+            print('wrong cmd')
+
     def _evt_command_status(self, prm):
         cmd, status = struct.unpack('<2H', prm)
         print('EVT_COMMAND_STATUS: cmd={:04X} stt={}'.format(cmd, status))
+        if cmd == self.Cmd_Start_Scan_Api:
+            self._close_command(cmd, status)
 
     def _evt_command_complete(self, prm):
         cmd, status = struct.unpack('<2H', prm)
         print('EVT_COMMAND_COMPLETE: cmd={:04X} stt={}'.format(cmd, status))
-        if self.curr_cmd is None:
-            print('no cmd waiting')
-        elif self.curr_cmd.cod == cmd:
-            self.curr_cmd.resul.put_nowait(status == 0)
-            self.curr_cmd = None
-        else:
-            print('wrong cmd')
+        self._close_command(cmd, status)
 
-    def _send_command_and_wait(self, cod, prm=None):
+    def _evt_scan_progress_result(self, prm):
+        if self.command['cb'] is not None:
+            _ = struct.unpack('<H', prm[:2])
+            adv = prm[2:]
+            self.command['cb'](adv)
+
+
+    def _send_command_and_wait(self, cod, prm=None, cb=None):
         # send
-        cmd = _COMMAND(cod, prm)
-        self.cmd_queue.put_nowait(cmd)
+        cmd = _COMMAND(cod, prm, cb)
+        self.command['todo'].put_nowait(cmd)
 
         # wait
         res = cmd.result()
         if res is None:
             # abort
-            self.cmd_queue.put_nowait(_COMMAND(self.ABORT_CURRENT_COMMAND))
+            self.command['todo'].put_nowait(_COMMAND(self.ABORT_CURRENT_COMMAND))
             return False
 
         return res
+
+    def _exec_command(self):
+        try:
+            cmd = self.command['todo'].get(True, self.command['poll'])
+
+            if cmd.cod == self.QUIT:
+                return False
+
+            if cmd.cod == self.ABORT_CURRENT_COMMAND:
+                self.command['curr'] = None
+                raise utili.Problema('abort')
+
+            if self.command['curr'] is None:
+                self.command['curr'] = cmd
+
+                self.command['cb'] = cmd.cb
+
+                msg = self.proto['tx'].compose(cmd.cod, cmd.prm)
+
+                print('IRP_MJ_WRITE Data: ' + utili.esa_da_ba(msg, ' '))
+                self.uart.write(msg)
+            else:
+                # busy
+                self.command['todo'].put_nowait(cmd)
+        except (utili.Problema, queue.Empty) as err:
+            if isinstance(err, utili.Problema):
+                print(err)
+
+        return True
 
     def run(self):
         print('nasco')
         while True:
             # any command?
-            try:
-                # cmd = _COMMAND
-                cmd = self.cmd_queue.get(True, self.poll)
-
-                if cmd.cod == self.QUIT:
-                    break
-
-                if cmd.cod == self.ABORT_CURRENT_COMMAND:
-                    self.curr_cmd = None
-                    break
-
-                if self.curr_cmd is None:
-                    self.curr_cmd = cmd
-                    msg = self.proto['tx'].compose(cmd.cod, cmd.prm)
-
-                    print('IRP_MJ_WRITE Data: ' + utili.esa_da_ba(msg, ' '))
-                    self.uart.write(msg)
-                else:
-                    # busy
-                    self.cmd_queue.put_nowait(cmd)
-            except (queue.Empty, KeyError) as err:
-                if isinstance(err, KeyError):
-                    print('comando sconosciuto')
+            if not self._exec_command():
+                # quit
+                break
 
             # any data?
             while self.uart.in_waiting:
@@ -183,7 +243,7 @@ class CY567x(threading.Thread):
             # kill the thd
             ktt = _COMMAND(self.QUIT)
 
-            self.cmd_queue.put_nowait(ktt)
+            self.command['todo'].put_nowait(ktt)
 
             # wait
             self.join()
@@ -206,13 +266,43 @@ class CY567x(threading.Thread):
         """
         return self._send_command_and_wait(self.Cmd_Init_Ble_Stack_Api)
 
+    def scan_start(self, cb):
+        """
+        start scanning for devices
+        :param cb: callback that will receive the advertise
+                   You can call scan_report to decompose it
+        :return: bool
+        """
+        return self._send_command_and_wait(self.Cmd_Start_Scan_Api, cb=cb)
+
+    def scan_stop(self):
+        """
+        stop scanning
+        :return: bool
+        """
+        return self._send_command_and_wait(self.Cmd_Stop_Scan_Api)
+
 
 if __name__ == '__main__':
+    import time
+
+    def scan_rep(adv):
+        sr = scan_report(adv)
+        print(sr)
+
     DONGLE = CY567x()
     if not DONGLE.is_ok():
         print('uart error')
     else:
-        print(DONGLE.init_ble_stack())
+        print('init: ' + str(DONGLE.init_ble_stack()))
+
+        print('start: ' + str(DONGLE.scan_start(scan_rep)))
+
+        time.sleep(5)
+
+        print('stop: ' + str(DONGLE.scan_stop()))
+
+        time.sleep(2)
 
         DONGLE.close()
 
