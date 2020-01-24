@@ -64,6 +64,110 @@ def _evt_cmd_sttcmplt(rsp):
     rsp['cmd'] = cmd
     rsp['stt'] = stt
 
+class PROTO:
+    """
+    Incapsula il protocollo di comunicazione (risposte)
+    """
+    _HEADER_CMD = 0x5943
+
+    def _testa(self):
+        estratti = False
+        if len(self.esamina) >= 6:
+            rx = self.esamina[:6]
+            self.esamina = self.esamina[6:]
+            estratti = True
+
+            hrsp, tot, evt = struct.unpack('<3H', rx)
+            if hrsp != _HEADER_RSP:
+                print('err hrsp <{}>'.format(rx.hex()))
+            elif tot == 2:
+                self.rsp = {
+                    'evt': evt
+                }
+            else:
+                self.prz = {
+                    'evt': evt,
+                    'tot': tot - 2,
+                    'altro': b''
+                }
+                self.stato = 1
+        return estratti
+
+    def _dati(self):
+        dim = min(self.prz['tot'], len(self.esamina))
+        if dim == 0:
+            return False
+
+        self.prz['altro'] += self.esamina[:dim]
+        self.esamina = self.esamina[dim:]
+        self.prz['tot'] -= dim
+        if self.prz['tot'] == 0:
+            del self.prz['tot']
+            self.rsp = self.prz
+            self.stato = 0
+        return True
+
+    def __init__(self):
+        self.esamina = b''
+        self.stati = {
+            0: self._testa,
+            1: self._dati
+        }
+        self.stato = 0
+        self.prz = None
+        self.rsp = None
+
+    def da_esaminare(self, dati):
+        """
+        passa la protocollo la roba
+        :param dati: la roba
+        :return: nulla
+        """
+        print('IRP_MJ_READ Data: ' + utili.esa_da_ba(dati, ' '))
+        self.esamina += dati
+
+    def risposta(self):
+        """
+        estrae una risposta dai dati raccolti (se possibile)
+        :return: la risposta o None
+        """
+        while len(self.esamina) and self.rsp is None:
+            if not self.stati[self.stato]():
+                break
+
+        if self.rsp is not None:
+            # provo a vedere il tipo di evento
+            LISTA = {
+                _EVT_COMMAND_STATUS: _evt_cmd_sttcmplt,
+                _EVT_COMMAND_COMPLETE: _evt_cmd_sttcmplt
+            }
+            try:
+                LISTA[self.rsp['evt']](self.rsp)
+            except KeyError:
+                # print(self.rsp)
+                pass
+
+        rsp = self.rsp
+        self.rsp = None
+        return rsp
+
+    def componi(self, cmd, prm=None):
+        """
+        crea un comando
+        :param cmd: codice del comando
+        :param prm: eventuali dati
+        :return: i byte del messaggio da spedire
+        """
+        dim = 0
+        if prm is not None:
+            dim = len(prm)
+        msg = struct.pack('<3H', PROTO._HEADER_CMD, cmd, dim)
+        if dim:
+            msg += prm
+
+        print('IRP_MJ_WRITE Data: ' + utili.esa_da_ba(msg, ' '))
+
+        return msg
 
 class CY5677(threading.Thread):
     """
@@ -1006,107 +1110,3 @@ if __name__ == '__main__':
     DONGLE.chiudi()
 
 
-class PROTO:
-    """
-    Incapsula il protocollo di comunicazione (risposte)
-    """
-    _HEADER_CMD = 0x5943
-
-    def _testa(self):
-        estratti = False
-        if len(self.esamina) >= 6:
-            rx = self.esamina[:6]
-            self.esamina = self.esamina[6:]
-            estratti = True
-
-            hrsp, tot, evt = struct.unpack('<3H', rx)
-            if hrsp != _HEADER_RSP:
-                print('err hrsp <{}>'.format(rx.hex()))
-            elif tot == 2:
-                self.rsp = {
-                    'evt': evt
-                }
-            else:
-                self.prz = {
-                    'evt': evt,
-                    'tot': tot - 2,
-                    'altro': b''
-                }
-                self.stato = 1
-        return estratti
-
-    def _dati(self):
-        dim = min(self.prz['tot'], len(self.esamina))
-        if dim == 0:
-            return False
-
-        self.prz['altro'] += self.esamina[:dim]
-        self.esamina = self.esamina[dim:]
-        self.prz['tot'] -= dim
-        if self.prz['tot'] == 0:
-            del self.prz['tot']
-            self.rsp = self.prz
-            self.stato = 0
-        return True
-
-    def __init__(self):
-        self.esamina = b''
-        self.stati = {
-            0: self._testa,
-            1: self._dati
-        }
-        self.stato = 0
-        self.prz = None
-        self.rsp = None
-
-    def da_esaminare(self, dati):
-        """
-        passa la protocollo la roba
-        :param dati: la roba
-        :return: nulla
-        """
-        print('IRP_MJ_READ Data: ' + utili.esa_da_ba(dati, ' '))
-        self.esamina += dati
-
-    def risposta(self):
-        """
-        estrae una risposta dai dati raccolti (se possibile)
-        :return: la risposta o None
-        """
-        while len(self.esamina) and self.rsp is None:
-            if not self.stati[self.stato]():
-                break
-
-        if self.rsp is not None:
-            # provo a vedere il tipo di evento
-            LISTA = {
-                _EVT_COMMAND_STATUS: _evt_cmd_sttcmplt,
-                _EVT_COMMAND_COMPLETE: _evt_cmd_sttcmplt
-            }
-            try:
-                LISTA[self.rsp['evt']](self.rsp)
-            except KeyError:
-                # print(self.rsp)
-                pass
-
-        rsp = self.rsp
-        self.rsp = None
-        return rsp
-
-    def componi(self, cmd, prm=None):
-        """
-        crea un comando
-        :param cmd: codice del comando
-        :param prm: eventuali dati
-        :return: i byte del messaggio da spedire
-        """
-        dim = 0
-        if prm is not None:
-            dim = len(prm)
-        msg = struct.pack('<3H', PROTO._HEADER_CMD, cmd, dim)
-        if dim:
-            msg += prm
-
-        print('IRP_MJ_WRITE Data: ' + utili.esa_da_ba(msg, ' '))
-
-        return msg

@@ -57,7 +57,7 @@ class PROTO:
         """
         inspect new data and extract messages
         :param questi: bytearray of data collected from serial port
-        :return: n.a.
+        :return: n.a. (call get_msg)
         """
         for cosa in questi:
             if cosa == self.first:
@@ -122,26 +122,33 @@ class PROTO_RX(PROTO):
         else:
             pass
 
-    # def interpreta(self, cosa):
-    #     if len(cosa) >= 4:
-    #         tot, msg = struct.unpack('<2H', cosa[:4])
-    #         prm = cosa[4:]
-    #         tot -= 2
-    #
-    #         if tot != len(prm):
-    #             print(self.name +
-    #                   ' ERR DIM {:04X}[{} != {}]: '.format(msg, tot, len(
-    #                       prm)) + utili.esa_da_ba(prm, ' '))
-    #         else:
-    #             print(
-    #                 self.name +
-    #                 ' {:04X}[{}]: '.format(msg, tot) +
-    #                 utili.esa_da_ba(prm, ' '))
-    #
-    #         return msg, tot, prm
-    #
-    #     print(self.name + ' ????: ' + utili.esa_da_ba(cosa, ' '))
-    #     return 0, 0, cosa
+    def decompose(self, cosa):
+        """
+        extract event and parameters from a message
+        :param cosa: bytearray (message)
+        :return: dictionary with 'evn', 'prm' (or empty)
+        """
+        msg = {}
+        if len(cosa) >= 4:
+            tot, evn = struct.unpack('<2H', cosa[:4])
+            prm = cosa[4:]
+            tot -= 2
+
+            if tot != len(prm):
+                print(self.name +
+                      ' ERR DIM {:04X}[{} != {}]: '.format(evn, tot, len(
+                          prm)) + utili.esa_da_ba(prm, ' '))
+            else:
+                msg['evn'] = evn
+                msg['prm'] = prm
+
+                print(
+                    self.name +
+                    ' {:04X}[{}]: '.format(evn, tot) +
+                    utili.esa_da_ba(prm, ' '))
+        else:
+            print(self.name + ' ????: ' + utili.esa_da_ba(cosa, ' '))
+        return msg
 
     def msg_to_string(self, cosa):
         risul = self.name + ' '
@@ -169,6 +176,8 @@ class PROTO_TX(PROTO):
     specialization for messages sent to CY5677
     """
 
+    _HEADER_CMD = 0x5943
+
     def __init__(self):
         PROTO.__init__(self, 'TX', 0x43, 0x59)
 
@@ -186,30 +195,6 @@ class PROTO_TX(PROTO):
             self.reinit()
         else:
             pass
-
-    # def interpreta(self, cosa):
-    #     if len(cosa) >= 4:
-    #         msg, tot = struct.unpack('<2H', cosa[:4])
-    #         prm = cosa[4:]
-    #
-    #         if tot != len(prm):
-    #             print(self.name +
-    #                   ' ERR DIM {:04X}[{} != {}]: '.format(msg, tot, len(
-    #                       prm)) + utili.esa_da_ba(prm, ' '))
-    #         else:
-    #             print(
-    #                 self.name +
-    #                 ' {:04X}[{}]: '.format(
-    #                     msg,
-    #                     tot) +
-    #                 utili.esa_da_ba(
-    #                     prm,
-    #                     ' '))
-    #
-    #         return msg, tot, prm
-    #
-    #     print(self.name + ' ????: ' + utili.esa_da_ba(cosa, ' '))
-    #     return 0, 0, cosa
 
     def msg_to_string(self, cosa):
         risul = self.name + ' '
@@ -229,3 +214,19 @@ class PROTO_TX(PROTO):
             risul += '????: ' + '\n\t' + utili.esa_da_ba(cosa, ' ')
 
         return risul
+
+    def compose(self, cod, prm=None):
+        """
+        create a command to be sent to the dongle
+        :param cod: command code
+        :param prm: bytearray (optional)
+        :return: bytearray
+        """
+        dim = 0
+        if prm is not None:
+            dim = len(prm)
+        msg = struct.pack('<3H', self._HEADER_CMD, cod, dim)
+        if dim:
+            msg += prm
+
+        return msg
