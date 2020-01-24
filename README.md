@@ -28,3 +28,19 @@ If you run the script, it scans for ble devices printing the list
 when executing `Cmd_Init_Ble_Stack_Api`, this time with `CyS_GenericEventHandler`, that
 forwards events to the pc. `Cmd_Init_Ble_Stack_Api` calls `CyBle_Stop`, so 
 you can invoke it whenever you want. This command is sent when you create `CY5677`
+
+### Serialization
+
+The thread: 
+1. manages access to the serial port 
+2. serializes access to internal variables avoiding locks
+
+### Command execution
+
+A command is composed by an opcode, optional parameters and a queue
+
+The flow of execution is:
+1. API puts a command on the queue and wait for the response on its queue
+2. the thread get the command, compose the packet and send it to the serial port
+3. the thread collects the events and when it receives EVT_COMMAND_COMPLETE sends the result to the command's queue
+4. API completes the operation and returns the result to the caller
