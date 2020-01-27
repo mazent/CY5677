@@ -1,32 +1,33 @@
 """
     Contiene:
-        *) L'implementazione della comunicazione bt con 220_demo via CY5677
+        *) L'implementazione della comunicazione bt con 220_demo via CY567x
         *) Un test di comunicazione
 """
 
 import time
 #import queue
 
-import cy5677
+import CY567x
 import utili
 
-class GHOST(cy5677.CY5677):
+
+
+class GHOST(CY567x.CY567x):
     """
-        implementa la comunicazione bt con 220-demo via CY5677
+        implementa la comunicazione bt con 220-demo via CY567x
     """
 
     def __init__(self, porta=None):
-        cy5677.CY5677.__init__(self, porta=porta)
-        #self.rsp = queue.Queue()
+        self.authReq = False
+        self.pairReq = False
 
-    def notification(self, rsp):
-        """
-            overriding per ricevere le notifiche, cioe' le risposte
-        :param rsp: il dizionario con la notifica
-        :return:
-        """
-        print('[{:04X}] -> {}'.format(rsp['crt'], rsp['ntf'].decode('ascii')))
+        CY567x.CY567x.__init__(self, porta=porta)
 
+    def gap_auth_req_cb(self, ai):
+        self.authReq = True
+
+    def gap_passkey_entry_request_cb(self):
+        self.pairReq = True
 
 
 DESCRIZIONE = \
@@ -71,15 +72,37 @@ if __name__ == '__main__':
     # test
     DISPO = GHOST()
 
-    if DISPO.a_posto():
+    if DISPO.is_ok():
         try:
+            if not DISPO.init_ble_stack():
+                raise utili.Problema('err init')
+
+            if not DISPO.set_device_io_capabilities('KEYBOARD DISPLAY'):
+                raise utili.Problema('err capa')
+
+            if not DISPO.set_local_device_security('3'):
+                raise utili.Problema('err security')
+
             if not DISPO.connect(MAC):
                 raise utili.Problema('err connect')
             print('connesso')
 
-            if not DISPO.exchange_mtu_size(MTU):
+            while not DISPO.authReq:
+                time.sleep(.1)
+
+            mtu = DISPO.exchange_gatt_mtu_size(MTU)
+            if mtu == 0:
                 raise utili.Problema('err mtu')
-            print('mtu {}'.format(MTU))
+            print('mtu {}'.format(mtu))
+
+            if not DISPO.initiate_pairing_request():
+                raise utili.Problema('err pair req')
+
+            while not DISPO.pairReq:
+                time.sleep(.1)
+
+            if not DISPO.pairing_passkey(123456):
+                raise utili.Problema('err passkey')
 
         except utili.Problema as err:
             print(err)
@@ -87,4 +110,4 @@ if __name__ == '__main__':
         time.sleep(5)
 
         DISPO.disconnect()
-        DISPO.chiudi()
+        DISPO.close()

@@ -4,6 +4,7 @@ manages two cypress dongles: CY5677 and CY5670 (old)
 import threading
 import queue
 import struct
+import datetime
 
 import serial
 
@@ -14,7 +15,7 @@ import cycost as cc
 BAUD_CY5670 = 115200
 BAUD_CY5677 = 921600
 
-CAPA = {
+IO_CAPABILITIES = {
     # Platform supports only a mechanism to display or convey only 6 digit
     # number to user.
     'DISPLAY ONLY': 0,
@@ -34,26 +35,6 @@ CAPA = {
     'KEYBOARD DISPLAY': 4,
 }
 
-
-class _COMMAND:
-
-    def __init__(self, cmd, prm=None, cb=None):
-        self.cod = cmd
-        self.prm = prm
-        self.resul = queue.Queue()
-        self.cb = cb
-
-    def result(self, to=5):
-        """
-        wait for and return the result
-        :param to: timeout in seconds
-        :return: the result or None if to expires
-        """
-        try:
-            return self.resul.get(True, to)
-        except queue.Empty:
-            return None
-
 ADVERTISEMENT_EVENT_TYPE = {
     0x00: 'Connectable undirected advertising',
     0x01: 'Connectable directed advertising',
@@ -68,6 +49,25 @@ ADDRESS_TYPE = {
     0x02: 'Public Resolvable Address',
     0x03: 'Random Resolvable Address'
 }
+
+
+class _COMMAND:
+
+    def __init__(self, cmd, prm=None):
+        self.cod = cmd
+        self.prm = prm
+        self.resul = queue.Queue()
+
+    def result(self, to=5):
+        """
+        wait for and return the result
+        :param to: timeout in seconds
+        :return: the result or None if to expires
+        """
+        try:
+            return self.resul.get(True, to)
+        except queue.Empty:
+            return None
 
 
 def scan_report(adv):
@@ -98,12 +98,17 @@ class CY567x(threading.Thread):
     # internal commands
     QUIT = 0xE5C1
     ABORT_CURRENT_COMMAND = 0xACC0
-    # dongle commands
+    # dongle commands (cfr CySmt_CommandLayer.c)
     Cmd_Init_Ble_Stack_Api = 0xFC07
     Cmd_Start_Scan_Api = 0xFE93
     Cmd_Stop_Scan_Api = 0xFE94
     Cmd_Set_Local_Device_Security_Api = 0xFE8D
     Cmd_Set_Device_Io_Capabilities_Api = 0xFE80
+    Cmd_Establish_Connection_Api = 0xFE97
+    Cmd_Exchange_GATT_MTU_Size_Api = 0xFE12
+    Cmd_Initiate_Pairing_Request_Api = 0xFE99
+    Cmd_Pairing_PassKey_Api = 0xFE9B
+    Cmd_Terminate_Connection_Api = 0xFE98
 
     def __init__(self, BAUD=BAUD_CY5677, poll=0.1, porta=None):
         self.proto = {
@@ -114,7 +119,17 @@ class CY567x(threading.Thread):
         self.events = {
             cc.EVT_COMMAND_STATUS: self._evt_command_status,
             cc.EVT_COMMAND_COMPLETE: self._evt_command_complete,
-            cc.EVT_SCAN_PROGRESS_RESULT: self._evt_scan_progress_result
+            cc.EVT_SCAN_PROGRESS_RESULT: self._evt_scan_progress_result,
+            cc.EVT_ESTABLISH_CONNECTION_RESPONSE: self._evt_gatt_connect_ind,
+            cc.EVT_ENHANCED_CONNECTION_COMPLETE: self._evt_gap_enhance_conn_complete,
+            cc.EVT_PAIRING_REQUEST_RECEIVED_NOTIFICATION: self._evt_gap_auth_req,
+            cc.EVT_DATA_LENGTH_CHANGED_NOTIFICATION: self._evt_gap_data_length_change,
+            cc.EVT_NEGOTIATED_PAIRING_PARAMETERS: self._evt_negotiated_pairing_parameters,
+            cc.EVT_PASSKEY_ENTRY_REQUEST: self._evt_gap_passkey_entry_request,
+            cc.EVT_EXCHANGE_GATT_MTU_SIZE_RESPONSE: self._evt_gattc_xchng_mtu_rsp,
+            cc.EVT_AUTHENTICATION_ERROR_NOTIFICATION: self._evt_gap_auth_failed,
+            cc.EVT_CONNECTION_TERMINATED_NOTIFICATION: self._evt_gap_device_disconnected,
+            cc.EVT_REPORT_STACK_MISC_STATUS: self._evt_report_stack_misc_status
         }
 
         self.connection = {
@@ -126,7 +141,6 @@ class CY567x(threading.Thread):
             'curr': None,
             'todo': queue.Queue(),
             'poll': poll,
-            'cb': None
         }
 
         try:
@@ -149,42 +163,184 @@ class CY567x(threading.Thread):
             self.start()
 
         except serial.SerialException as err:
-            print(err)
+            self._print(err)
             self.uart = None
 
     def __del__(self):
-        print('del')
+        self._print('del')
         self.close()
+
+    def _print(self, msg):
+        adesso = datetime.datetime.now()
+        sadesso = '{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{:03.0f}: '.format(
+            adesso.year, adesso.month, adesso.day, adesso.hour, adesso.minute,
+            adesso.second, adesso.microsecond / 1000.0)
+
+        print(sadesso + msg)
 
     def _close_command(self, cod, resul):
         if self.command['curr'] is None:
-            print('no cmd waiting')
+            self._print('no cmd waiting')
         elif self.command['curr'].cod == cod:
             self.command['curr'].resul.put_nowait(resul == 0)
             self.command['curr'] = None
         else:
-            print('wrong cmd')
+            self._print('wrong cmd')
 
     def _evt_command_status(self, prm):
         cmd, status = struct.unpack('<2H', prm)
-        print('EVT_COMMAND_STATUS: cmd={:04X} stt={}'.format(cmd, status))
-        if cmd == self.Cmd_Start_Scan_Api:
+        self._print(
+            'EVT_COMMAND_STATUS: cmd={:04X} stt={}'.format(
+                cmd, status))
+        if cmd in (self.Cmd_Start_Scan_Api,
+                   self.Cmd_Initiate_Pairing_Request_Api):
             self._close_command(cmd, status)
 
     def _evt_command_complete(self, prm):
         cmd, status = struct.unpack('<2H', prm)
-        print('EVT_COMMAND_COMPLETE: cmd={:04X} stt={}'.format(cmd, status))
-        self._close_command(cmd, status)
+        self._print(
+            'EVT_COMMAND_COMPLETE: cmd={:04X} stt={}'.format(
+                cmd, status))
+        if cmd == self.Cmd_Initiate_Pairing_Request_Api:
+            # the command was closed by _evt_command_status: now we must tell
+            # that the procedure was successfull
+            self.gap_auth_resul_cb(0)
+        else:
+            self._close_command(cmd, status)
 
     def _evt_scan_progress_result(self, prm):
-        if self.command['cb'] is not None:
-            _ = struct.unpack('<H', prm[:2])
-            adv = prm[2:]
-            self.command['cb'](adv)
+        _ = struct.unpack('<H', prm[:2])
+        adv = prm[2:]
+        self.scan_progress_cb(adv)
 
-    def _send_command_and_wait(self, cod, prm=None, cb=None):
+    def _evt_gatt_connect_ind(self, prm):
+        cmd, conh = struct.unpack('<2H', prm)
+        self._print(
+            'EVT_ESTABLISH_CONNECTION_RESPONSE: cmd={:04X} handle={:04X}'.format(
+                cmd, conh))
+        self.connection['cyBle_connHandle'] = conh
+        self.connection['mtu'] = 23
+
+    def _evt_gap_enhance_conn_complete(self, prm):
+        cmd, status, conh, role = struct.unpack('<HBHB', prm[:6])
+        self._print(
+            'EVT_ENHANCED_CONNECTION_COMPLETE: cmd={:04X} status={} handle={:04X} role='.format(
+                cmd, status, conh) + 'master' if role == 0 else 'slave')
+
+    def _evt_gap_auth_req(self, prm):
+        """
+        EVT_PAIRING_REQUEST_RECEIVED_NOTIFICATION [7]:
+        04 00 	cyBle_connHandle
+                CYBLE_GAP_AUTH_INFO_T
+        02 		security
+        00 		bonding
+        07 		ekeySize
+        00 		authErr
+        00		pairingProperties
+        """
+        _, security, bonding, ekeySize, _, pairingProperties = struct.unpack(
+            '<H5B', prm)
+        ai = {
+            'security': security,
+            'bonding': bonding,
+            'ekeySize': ekeySize,
+            'pairingProperties': pairingProperties
+        }
+        self.gap_auth_req_cb(ai)
+
+    def _evt_gap_data_length_change(self, prm):
+        """
+        EVT_DATA_LENGTH_CHANGED_NOTIFICATION [10]:
+        04 00   cyBle_connHandle
+                CYBLE_GAP_CONN_DATA_LENGTH_T
+        1B 00   connMaxTxOctets
+        48 01   connMaxTxTime
+        1B 00   connMaxRxOctets
+        48 01   connMaxRxTime
+        """
+        _, txo, txt, rxo, rxt = struct.unpack('<5H', prm)
+        self._print(
+            'EVT_DATA_LENGTH_CHANGED_NOTIFICATION: connMaxTxOctets={} connMaxTxTime={} connMaxRxOctets={} connMaxRxTime={}'.format(
+                txo,
+                txt,
+                rxo,
+                rxt))
+
+    def _evt_negotiated_pairing_parameters(self, prm):
+        """
+        EVT_NEGOTIATED_PAIRING_PARAMETERS [8]:
+        04 00 cyBle_connHandle
+        00    reason (AUTH_PARAM_NEGOTIATED=0=CYBLE_EVT_GAP_SMP_NEGOTIATED_AUTH_INFO
+                      AUTH_COMPLETED=1=CYBLE_EVT_GAP_AUTH_COMPLETE
+              CYBLE_GAP_AUTH_INFO_T
+        02 	  security
+        00 	  bonding
+        07 	  ekeySize
+        00 	  authErr
+        00	  pairingProperties
+        """
+        _, reason, _, _, _, authErr, _ = struct.unpack(
+            '<H6B', prm)
+        self._print(
+            'EVT_NEGOTIATED_PAIRING_PARAMETERS: reason={} authErr={}'.format(
+                reason,
+                authErr))
+
+    def _evt_gap_passkey_entry_request(self, _):
+        """
+        EVT_PASSKEY_ENTRY_REQUEST [4]:
+            99 FE command
+            04 00 cyBle_connHandle
+        """
+        self.gap_passkey_entry_request_cb()
+
+    def _evt_gattc_xchng_mtu_rsp(self, prm):
+        """
+        EVT_EXCHANGE_GATT_MTU_SIZE_RESPONSE [6]:
+            12 FE command
+            04 00 cyBle_connHandle
+            17 00 mtu
+        """
+        _, _, mtu = struct.unpack('<3H', prm)
+        self.connection['mtu'] = mtu
+        self._print('EVT_EXCHANGE_GATT_MTU_SIZE_RESPONSE: mtu={}'.format(mtu))
+
+    def _evt_gap_auth_failed(self, prm):
+        """
+        EVT_AUTHENTICATION_ERROR_NOTIFICATION [5]:
+            99 FE command
+            04 00 cyBle_connHandle
+            03    reason
+        """
+        _, _, reason = struct.unpack('<2HB', prm)
+        self.gap_auth_resul_cb(reason)
+
+    def _evt_gap_device_disconnected(self, prm):
+        """
+        EVT_CONNECTION_TERMINATED_NOTIFICATION [3]:
+            04 00 cyBle_connHandle
+            13    CYBLE_HCI_ERROR_T
+        """
+        _, reason = struct.unpack('<HB', prm)
+        self.connection['cyBle_connHandle'] = None
+        self.gap_device_disconnected_cb(reason)
+
+    def _evt_report_stack_misc_status(self, prm):
+        """
+        EVT_REPORT_STACK_MISC_STATUS [5]:
+            29 00 event
+            01 00 prm size
+            01    prm
+        """
+        event, dim = struct.unpack('<2H', prm[:4])
+        prm = prm[4:]
+        self._print(
+            'EVT_REPORT_STACK_MISC_STATUS: CYBLE_EVT_={:04X}[{}] '.format(
+                event, dim) + utili.esa_da_ba(prm))
+
+    def _send_command_and_wait(self, cod, prm=None):
         # send
-        cmd = _COMMAND(cod, prm, cb)
+        cmd = _COMMAND(cod, prm)
         self.command['todo'].put_nowait(cmd)
 
         # wait
@@ -211,23 +367,21 @@ class CY567x(threading.Thread):
             if self.command['curr'] is None:
                 self.command['curr'] = cmd
 
-                self.command['cb'] = cmd.cb
-
                 msg = self.proto['tx'].compose(cmd.cod, cmd.prm)
 
-                print('IRP_MJ_WRITE Data: ' + utili.esa_da_ba(msg, ' '))
+                self._print('IRP_MJ_WRITE Data: ' + utili.esa_da_ba(msg, ' '))
                 self.uart.write(msg)
             else:
                 # busy
                 self.command['todo'].put_nowait(cmd)
         except (utili.Problema, queue.Empty) as err:
             if isinstance(err, utili.Problema):
-                print(err)
+                self._print(err)
 
         return True
 
     def run(self):
-        print('nasco')
+        self._print('nasco')
         while True:
             # any command?
             if not self._exec_command():
@@ -240,7 +394,7 @@ class CY567x(threading.Thread):
                 if len(tmp) == 0:
                     break
 
-                print('IRP_MJ_READ Data: ' + utili.esa_da_ba(tmp, ' '))
+                self._print('IRP_MJ_READ Data: ' + utili.esa_da_ba(tmp, ' '))
                 self.proto['rx'].examine(tmp)
 
             # any message?
@@ -254,8 +408,8 @@ class CY567x(threading.Thread):
                     try:
                         self.events[dec['evn']](dec['prm'])
                     except KeyError:
-                        print(self.proto['rx'].msg_to_string(dec['prm']))
-        print('muoio')
+                        self._print(self.proto['rx'].msg_to_string(dec['prm']))
+        self._print('muoio')
 
     def close(self):
         """
@@ -287,16 +441,17 @@ class CY567x(threading.Thread):
         send the command that stops and then restart bluetooth
         :return: bool
         """
+        self._print('init_ble_stack')
         return self._send_command_and_wait(self.Cmd_Init_Ble_Stack_Api)
 
-    def scan_start(self, cb):
+    def scan_start(self):
         """
         start scanning for devices
         :param cb: callback that will receive the advertise
                    You can call scan_report to decompose it
         :return: bool
         """
-        return self._send_command_and_wait(self.Cmd_Start_Scan_Api, cb=cb)
+        return self._send_command_and_wait(self.Cmd_Start_Scan_Api)
 
     def scan_stop(self):
         """
@@ -313,6 +468,7 @@ class CY567x(threading.Thread):
                       '3': Authenticated pairing with encryption
         :return: bool
         """
+        self._print('set_local_device_security')
         if level in ('1', '2', '3'):
             # Mode 1
             security = 0x10 + int(level) - 1
@@ -343,24 +499,140 @@ class CY567x(threading.Thread):
 
     def set_device_io_capabilities(self, capa):
         """
-        guess what
+        can influence secutity
         :param capa: cfr CAPA
         :return: bool
         """
+        self._print('set_device_io_capabilities')
         try:
-            prm = bytearray([CAPA[capa]])
+            prm = bytearray([IO_CAPABILITIES[capa]])
             return self._send_command_and_wait(
                 self.Cmd_Set_Device_Io_Capabilities_Api, prm=prm)
         except KeyError:
             return False
 
+    def connect(self, bda, public=True):
+        """
+        connect to the device
+        :param bda: string
+        :return: bool
+        """
+        if self.connection['cyBle_connHandle'] is None:
+            self._print('connect')
+            prm = utili.mac_da_str(bda)
+            prm.append(0 if public else 1)
+
+            return self._send_command_and_wait(
+                self.Cmd_Establish_Connection_Api, prm=prm)
+
+        # only one device at a time
+        return False
+
+    def disconnect(self):
+        """
+        close the connection to the device
+        :return: bool
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('disconnect')
+            prm = struct.pack('<H', self.connection['cyBle_connHandle'])
+            return self._send_command_and_wait(
+                self.Cmd_Terminate_Connection_Api, prm=prm)
+
+        # no connections: so I have executed the disconnection!
+        return True
+
+    def exchange_gatt_mtu_size(self, mtu):
+        """
+        try to change mtu size
+        :param mtu: 23 <= mtu <= 512
+        :return: mtu or 0 if error
+        """
+        if not 23 <= mtu <= 512:
+            return 0
+
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('exchange_gatt_mtu_size')
+            prm = struct.pack(
+                '<2H', self.connection['cyBle_connHandle'], mtu)
+            if self._send_command_and_wait(
+                    self.Cmd_Exchange_GATT_MTU_Size_Api, prm=prm):
+                return self.connection['mtu']
+
+        return 0
+
+    def initiate_pairing_request(self):
+        """
+        Invoke after gap_auth_req_cb
+        :return: bool
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('initiate_pairing_request')
+            prm = struct.pack('<H', self.connection['cyBle_connHandle'])
+            return self._send_command_and_wait(
+                self.Cmd_Initiate_Pairing_Request_Api, prm=prm)
+
+        return False
+
+    def pairing_passkey(self, pk):
+        """
+        Invoke after gap_passkey_entry_request_cb
+        :param pk: 0 <= passkey <= 999999
+        :return: bool
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('pairing_passkey')
+            prm = struct.pack('<HIB', self.connection['cyBle_connHandle'],
+                              pk, 1)
+            return self._send_command_and_wait(
+                self.Cmd_Pairing_PassKey_Api, prm=prm)
+
+        return False
+
+    def scan_progress_cb(self, adv):
+        """
+        callback invoked when an advertisement is received
+        :param adv: bytearray
+        :return: n.a.
+        """
+        sr = scan_report(adv)
+        self._print(sr)
+
+    def gap_auth_req_cb(self, ai):
+        """
+        callback invoked when an authentication request is received
+        :param ai: dictionary with (cfr CYBLE_GAP_AUTH_INFO_T):
+                   'security', 'bonding', 'ekeySize', 'pairingProperties'
+        :return: n.a.
+        """
+        self._print(ai)
+
+    def gap_passkey_entry_request_cb(self):
+        """
+        callback invoked when the passkey request is received
+        :return: n.a.
+        """
+        self._print('gap_passkey_entry_request_cb')
+
+    def gap_auth_resul_cb(self, reason):
+        """
+        callback invoked when the authentication procedure terminates
+        :param reason: byte (0=success, != cfr CYBLE_GAP_AUTH_FAILED_REASON_T)
+        :return: n.a.
+        """
+        self._print('gap_auth_resul_cb: {}'.format(reason))
+
+    def gap_device_disconnected_cb(self, reason):
+        """
+        callback invoked when the peripheral disconnets
+        :param reason: CYBLE_HCI_ERROR_T
+        :return: n.a.
+        """
+        self._print('gap_device_disconnected_cb: {}'.format(reason))
+
 
 if __name__ == '__main__':
     import time
-
-    def scan_rep(adv):
-        sr = scan_report(adv)
-        print(sr)
 
     DONGLE = CY567x()
     if not DONGLE.is_ok():
@@ -368,15 +640,17 @@ if __name__ == '__main__':
     else:
         print('init: ' + str(DONGLE.init_ble_stack()))
 
-        print('secu: ' + str(DONGLE.set_local_device_security('1')))
+        print('start: ' + str(DONGLE.scan_start()))
 
-        print('capa: ' + str(DONGLE.set_device_io_capabilities('KEYBOARD DISPLAY')))
+        time.sleep(5)
 
-        # print('start: ' + str(DONGLE.scan_start(scan_rep)))
+        print('stop: ' + str(DONGLE.scan_stop()))
+
+        # print('secu: ' + str(DONGLE.set_local_device_security('1')))
         #
-        # time.sleep(5)
+        # print('capa: ' + str(DONGLE.set_device_io_capabilities('KEYBOARD DISPLAY')))
         #
-        # print('stop: ' + str(DONGLE.scan_stop()))
+        # print('conn: ' + str(DONGLE.connect('00:A0:50:C4:A4:2D')))
 
         time.sleep(2)
 

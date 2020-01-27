@@ -342,7 +342,6 @@ def esa_da_ba(ba, sep='-'):
     :param sep: separatore
     :return:
     """
-
     esa = ''
     if len(ba) == 0:
         pass

@@ -36,6 +36,11 @@ The flow of execution is:
 3. the thread collects the events and when it receives EVT_COMMAND_COMPLETE sends the result to the command's queue
 4. API completes the operation and returns the result to the caller
 
-### Notifications
+### Callbacks
 
-You can override `notification` to receive notifications
+You can override:
+1. `scan_progress_cb`: it will receive advertisements when you scan for ble devices
+2. `gap_auth_req_cb`: the peripheral is asking for authentication
+3. `gap_passkey_entry_request_cb`: you has to send passkey to be used during the pairing procedure
+4. `gap_auth_resul_cb`: authentication procedure ended with success(0) or failure
+5. `gap_device_disconnected_cb`: peripheral disconnection
