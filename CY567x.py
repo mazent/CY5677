@@ -14,6 +14,26 @@ import cycost as cc
 BAUD_CY5670 = 115200
 BAUD_CY5677 = 921600
 
+CAPA = {
+    # Platform supports only a mechanism to display or convey only 6 digit
+    # number to user.
+    'DISPLAY ONLY': 0,
+
+    # The device has a mechanism whereby the user can indicate 'yes' or 'no'.
+    'DISPLAY YESNO': 1,
+
+    # Platform supports a numeric keyboard that can input the numbers '0' through '9'
+    # and a confirmation key(s) for 'yes' and 'no'.
+    'KEYBOARD ONLY': 2,
+
+    # Platform does not have the ability to display or communicate a 6 digit decimal number.
+    'NOINPUT NOOUTPUT': 3,
+
+    # Platform supports a mechanism through which 6 digit numeric value can be displayed
+    # and numeric keyboard that can input the numbers '0' through '9'.
+    'KEYBOARD DISPLAY': 4,
+}
+
 
 class _COMMAND:
 
@@ -49,6 +69,7 @@ ADDRESS_TYPE = {
     0x03: 'Random Resolvable Address'
 }
 
+
 def scan_report(adv):
     """
     utility to decompose an advertise (cfr Send_advt_report)
@@ -81,6 +102,8 @@ class CY567x(threading.Thread):
     Cmd_Init_Ble_Stack_Api = 0xFC07
     Cmd_Start_Scan_Api = 0xFE93
     Cmd_Stop_Scan_Api = 0xFE94
+    Cmd_Set_Local_Device_Security_Api = 0xFE8D
+    Cmd_Set_Device_Io_Capabilities_Api = 0xFE80
 
     def __init__(self, BAUD=BAUD_CY5677, poll=0.1, porta=None):
         self.proto = {
@@ -159,7 +182,6 @@ class CY567x(threading.Thread):
             adv = prm[2:]
             self.command['cb'](adv)
 
-
     def _send_command_and_wait(self, cod, prm=None, cb=None):
         # send
         cmd = _COMMAND(cod, prm, cb)
@@ -169,7 +191,8 @@ class CY567x(threading.Thread):
         res = cmd.result()
         if res is None:
             # abort
-            self.command['todo'].put_nowait(_COMMAND(self.ABORT_CURRENT_COMMAND))
+            self.command['todo'].put_nowait(
+                _COMMAND(self.ABORT_CURRENT_COMMAND))
             return False
 
         return res
@@ -282,6 +305,55 @@ class CY567x(threading.Thread):
         """
         return self._send_command_and_wait(self.Cmd_Stop_Scan_Api)
 
+    def set_local_device_security(self, level):
+        """
+        configure cyBle_authInfo
+        :param level: '1': No Security (No Authentication & No Encryption)
+                      '2': Unauthenticated pairing with encryption
+                      '3': Authenticated pairing with encryption
+        :return: bool
+        """
+        if level in ('1', '2', '3'):
+            # Mode 1
+            security = 0x10 + int(level) - 1
+            # No bonding
+            bonding = 0
+            # 16 bit keys
+            ekeySize = 16
+            # this is an output
+            authErr = 0
+            # no prop
+            pairingProperties = 0
+            # don't force secure connections (this should be done by the perip)
+            CyBle_GapSetSecureConnectionsOnlyMode = 0
+
+            prm = struct.pack(
+                '<6B',
+                security,
+                bonding,
+                ekeySize,
+                authErr,
+                pairingProperties,
+                CyBle_GapSetSecureConnectionsOnlyMode)
+
+            return self._send_command_and_wait(
+                self.Cmd_Set_Local_Device_Security_Api, prm=prm)
+
+        return False
+
+    def set_device_io_capabilities(self, capa):
+        """
+        guess what
+        :param capa: cfr CAPA
+        :return: bool
+        """
+        try:
+            prm = bytearray([CAPA[capa]])
+            return self._send_command_and_wait(
+                self.Cmd_Set_Device_Io_Capabilities_Api, prm=prm)
+        except KeyError:
+            return False
+
 
 if __name__ == '__main__':
     import time
@@ -296,11 +368,15 @@ if __name__ == '__main__':
     else:
         print('init: ' + str(DONGLE.init_ble_stack()))
 
-        print('start: ' + str(DONGLE.scan_start(scan_rep)))
+        print('secu: ' + str(DONGLE.set_local_device_security('1')))
 
-        time.sleep(5)
+        print('capa: ' + str(DONGLE.set_device_io_capabilities('KEYBOARD DISPLAY')))
 
-        print('stop: ' + str(DONGLE.scan_stop()))
+        # print('start: ' + str(DONGLE.scan_start(scan_rep)))
+        #
+        # time.sleep(5)
+        #
+        # print('stop: ' + str(DONGLE.scan_stop()))
 
         time.sleep(2)
 
