@@ -7,16 +7,7 @@ for cy5670 (different baud rate)
 
 From [this](https://community.cypress.com/message/143227) post you can
 reach  a python [script](https://github.com/odwdinc/Cy_BleBridge) for
-the cy5677 dongle: it is quite different
-
-Here the serial port is managed by a thread: read and writes are serialized
-using queues:
-1. The command is posted to the command queue
-2. `run` sends the command to the dongle
-3. `run` reads the serial port, collects the data and pass them to `PROTO`
-4. `run` invokes `PROTO` and closes the command sending the replay to its queue
-
-You can override `notification` to receive notifications
+the cy5677 dongle: it is quite different from this
 
 If you run the script, it scans for ble devices printing the list
 
@@ -44,3 +35,7 @@ The flow of execution is:
 2. the thread get the command, compose the packet and send it to the serial port
 3. the thread collects the events and when it receives EVT_COMMAND_COMPLETE sends the result to the command's queue
 4. API completes the operation and returns the result to the caller
+
+### Notifications
+
+You can override `notification` to receive notifications
