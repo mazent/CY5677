@@ -215,18 +215,17 @@ class PROTO_TX(PROTO):
 
         return risul
 
-    def compose(self, cod, prm=None):
+    def compose(self, cmd):
         """
         create a command to be sent to the dongle
-        :param cod: command code
-        :param prm: bytearray (optional)
+        :param cmd: dict with parameters
         :return: bytearray
         """
         dim = 0
-        if prm is not None:
-            dim = len(prm)
-        msg = struct.pack('<3H', self._HEADER_CMD, cod, dim)
+        if cmd['prm'] is not None:
+            dim = len(cmd['prm'])
+        msg = struct.pack('<3H', self._HEADER_CMD, cmd['cod'], dim)
         if dim:
-            msg += prm
+            msg += cmd['prm']
 
         return msg

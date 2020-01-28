@@ -54,20 +54,43 @@ ADDRESS_TYPE = {
 class _COMMAND:
 
     def __init__(self, cmd, prm=None):
-        self.cod = cmd
-        self.prm = prm
-        self.resul = queue.Queue()
+        self._cod = cmd
+        self._prm = prm
+        self._res_q = queue.Queue()
 
-    def result(self, to=5):
+    def are_you(self, cmd):
+        """
+        compare the command codes
+        :param cmd: command code
+        :return: bool
+        """
+        return self._cod == cmd
+
+    def get(self):
+        """
+        retrieves the command's parameters
+        :return:
+        """
+        return {'cod': self._cod, 'prm': self._prm}
+
+    def get_result(self, to=5):
         """
         wait for and return the result
         :param to: timeout in seconds
         :return: the result or None if to expires
         """
         try:
-            return self.resul.get(True, to)
+            return self._res_q.get(True, to)
         except queue.Empty:
             return None
+
+    def set_result(self, res):
+        """
+        put the result in the queue
+        :param res: the command's result
+        :return: n.a.
+        """
+        self._res_q.put_nowait(res)
 
 
 def scan_report(adv):
@@ -129,8 +152,9 @@ class CY567x(threading.Thread):
             cc.EVT_EXCHANGE_GATT_MTU_SIZE_RESPONSE: self._evt_gattc_xchng_mtu_rsp,
             cc.EVT_AUTHENTICATION_ERROR_NOTIFICATION: self._evt_gap_auth_failed,
             cc.EVT_CONNECTION_TERMINATED_NOTIFICATION: self._evt_gap_device_disconnected,
-            cc.EVT_REPORT_STACK_MISC_STATUS: self._evt_report_stack_misc_status
-        }
+            cc.EVT_REPORT_STACK_MISC_STATUS: self._evt_report_stack_misc_status,
+            cc.EVT_CHARACTERISTIC_VALUE_NOTIFICATION: self._evt_gattc_handle_value_ntf,
+            cc.EVT_CHARACTERISTIC_VALUE_INDICATION: self._evt_gattc_handle_value_ind}
 
         self.connection = {
             'mtu': 23,
@@ -163,7 +187,7 @@ class CY567x(threading.Thread):
             self.start()
 
         except serial.SerialException as err:
-            self._print(err)
+            self._print(str(err))
             self.uart = None
 
     def __del__(self):
@@ -181,8 +205,8 @@ class CY567x(threading.Thread):
     def _close_command(self, cod, resul):
         if self.command['curr'] is None:
             self._print('no cmd waiting')
-        elif self.command['curr'].cod == cod:
-            self.command['curr'].resul.put_nowait(resul == 0)
+        elif self.command['curr'].are_you(cod):
+            self.command['curr'].set_result(resul == 0)
             self.command['curr'] = None
         else:
             self._print('wrong cmd')
@@ -210,8 +234,7 @@ class CY567x(threading.Thread):
 
     def _evt_scan_progress_result(self, prm):
         _ = struct.unpack('<H', prm[:2])
-        adv = prm[2:]
-        self.scan_progress_cb(adv)
+        self.scan_progress_cb(prm[2:])
 
     def _evt_gatt_connect_ind(self, prm):
         cmd, conh = struct.unpack('<2H', prm)
@@ -336,7 +359,18 @@ class CY567x(threading.Thread):
         prm = prm[4:]
         self._print(
             'EVT_REPORT_STACK_MISC_STATUS: CYBLE_EVT_={:04X}[{}] '.format(
-                event, dim) + utili.esa_da_ba(prm))
+                event, dim) + utili.esa_da_ba(prm, ' '))
+
+    def _evt_gattc_handle_value_ntf(self, prm):
+        # connHandle, attrHandle, len
+        _, crt, _ = struct.unpack('<3H', prm[:6])
+        ntf = prm[6:]
+        self.gattc_handle_value_ntf_cb(crt, ntf)
+
+    def _evt_gattc_handle_value_ind(self, prm):
+        # connHandle, attrHandle, result of CyBle_GattcConfirmation, len
+        _, crt, result, _ = struct.unpack('<4H', prm[:8])
+        self.gattc_handle_value_ind_cb(crt, result, prm[8:])
 
     def _send_command_and_wait(self, cod, prm=None):
         # send
@@ -344,7 +378,7 @@ class CY567x(threading.Thread):
         self.command['todo'].put_nowait(cmd)
 
         # wait
-        res = cmd.result()
+        res = cmd.get_result()
         if res is None:
             # abort
             self.command['todo'].put_nowait(
@@ -357,17 +391,18 @@ class CY567x(threading.Thread):
         try:
             cmd = self.command['todo'].get(True, self.command['poll'])
 
-            if cmd.cod == self.QUIT:
+            if cmd.are_you(self.QUIT):
                 return False
 
-            if cmd.cod == self.ABORT_CURRENT_COMMAND:
+            if cmd.are_you(self.ABORT_CURRENT_COMMAND):
                 self.command['curr'] = None
                 raise utili.Problema('abort')
 
             if self.command['curr'] is None:
                 self.command['curr'] = cmd
 
-                msg = self.proto['tx'].compose(cmd.cod, cmd.prm)
+                #msg = self.proto['tx'].compose(cmd.cod, cmd.prm)
+                msg = self.proto['tx'].compose(cmd.get())
 
                 self._print('IRP_MJ_WRITE Data: ' + utili.esa_da_ba(msg, ' '))
                 self.uart.write(msg)
@@ -376,7 +411,7 @@ class CY567x(threading.Thread):
                 self.command['todo'].put_nowait(cmd)
         except (utili.Problema, queue.Empty) as err:
             if isinstance(err, utili.Problema):
-                self._print(err)
+                self._print(str(err))
 
         return True
 
@@ -408,7 +443,9 @@ class CY567x(threading.Thread):
                     try:
                         self.events[dec['evn']](dec['prm'])
                     except KeyError:
-                        self._print(self.proto['rx'].msg_to_string(dec['prm']))
+                        self._print(
+                            'PLEASE MANAGE ' +
+                            self.proto['rx'].msg_to_string(msg))
         self._print('muoio')
 
     def close(self):
@@ -596,7 +633,7 @@ class CY567x(threading.Thread):
         :return: n.a.
         """
         sr = scan_report(adv)
-        self._print(sr)
+        self._print(str(sr))
 
     def gap_auth_req_cb(self, ai):
         """
@@ -605,7 +642,7 @@ class CY567x(threading.Thread):
                    'security', 'bonding', 'ekeySize', 'pairingProperties'
         :return: n.a.
         """
-        self._print(ai)
+        self._print(str(ai))
 
     def gap_passkey_entry_request_cb(self):
         """
@@ -630,6 +667,30 @@ class CY567x(threading.Thread):
         """
         self._print('gap_device_disconnected_cb: {}'.format(reason))
 
+    def gattc_handle_value_ntf_cb(self, crt, ntf):
+        """
+        callback invoked when the peripheral sends a notification
+        :param crt: characteristic's handle
+        :param ntf: notification (bytearray)
+        :return: n.a.
+        """
+        self._print(
+            'gattc_handle_value_ntf_cb: handle:{:04X} '.format(crt) +
+            utili.esa_da_ba(ntf, ' '))
+
+    def gattc_handle_value_ind_cb(self, crt, result, ind):
+        """
+        callback invoked when the peripheral sends an indication
+        :param crt: characteristic's handle
+        :param result: of CyBle_GattcConfirmation
+        :param ind: bytearray
+        :return: n.a.
+        """
+        self._print(
+            'gattc_handle_value_ind_cb: handle:{:04X} confirm={}'.format(
+                crt, result) +
+            utili.esa_da_ba(ind, ' '))
+
 
 if __name__ == '__main__':
     import time
@@ -640,15 +701,18 @@ if __name__ == '__main__':
     else:
         print('init: ' + str(DONGLE.init_ble_stack()))
 
+        # scan
         print('start: ' + str(DONGLE.scan_start()))
 
         time.sleep(5)
 
         print('stop: ' + str(DONGLE.scan_stop()))
 
+        # connect
         # print('secu: ' + str(DONGLE.set_local_device_security('1')))
         #
-        # print('capa: ' + str(DONGLE.set_device_io_capabilities('KEYBOARD DISPLAY')))
+        # print('capa: ' + str(
+        #     DONGLE.set_device_io_capabilities('KEYBOARD DISPLAY')))
         #
         # print('conn: ' + str(DONGLE.connect('00:A0:50:C4:A4:2D')))
 

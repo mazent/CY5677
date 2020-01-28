@@ -21,7 +21,19 @@ class GHOST(CY567x.CY567x):
         self.authReq = False
         self.pairReq = False
 
-        CY567x.CY567x.__init__(self, porta=porta)
+        super().__init__(self, porta=porta)
+
+        try:
+            if not DISPO.init_ble_stack():
+                raise utili.Problema('err init')
+
+            if not DISPO.set_device_io_capabilities('KEYBOARD DISPLAY'):
+                raise utili.Problema('err capa')
+
+            if not DISPO.set_local_device_security('3'):
+                raise utili.Problema('err security')
+        except utili.Problema as err:
+            print(err)
 
     def gap_auth_req_cb(self, ai):
         self.authReq = True
@@ -74,15 +86,6 @@ if __name__ == '__main__':
 
     if DISPO.is_ok():
         try:
-            if not DISPO.init_ble_stack():
-                raise utili.Problema('err init')
-
-            if not DISPO.set_device_io_capabilities('KEYBOARD DISPLAY'):
-                raise utili.Problema('err capa')
-
-            if not DISPO.set_local_device_security('3'):
-                raise utili.Problema('err security')
-
             if not DISPO.connect(MAC):
                 raise utili.Problema('err connect')
             print('connesso')

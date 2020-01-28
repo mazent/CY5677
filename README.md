@@ -44,3 +44,5 @@ You can override:
 3. `gap_passkey_entry_request_cb`: you has to send passkey to be used during the pairing procedure
 4. `gap_auth_resul_cb`: authentication procedure ended with success(0) or failure
 5. `gap_device_disconnected_cb`: peripheral disconnection
+6. `gattc_handle_value_ntf_cb`: receives notifications
+7. `gattc_handle_value_ind_cb`: receives indications
