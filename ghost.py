@@ -21,16 +21,19 @@ class GHOST(CY567x.CY567x):
         self.authReq = False
         self.pairReq = False
 
-        super().__init__(self, porta=porta)
+        CY567x.CY567x.__init__(self, porta=porta)
 
         try:
-            if not DISPO.init_ble_stack():
+            if not self.is_ok():
+                raise utili.Problema('not OK')
+
+            if not self.init_ble_stack():
                 raise utili.Problema('err init')
 
-            if not DISPO.set_device_io_capabilities('KEYBOARD DISPLAY'):
+            if not self.set_device_io_capabilities('KEYBOARD DISPLAY'):
                 raise utili.Problema('err capa')
 
-            if not DISPO.set_local_device_security('3'):
+            if not self.set_local_device_security('3'):
                 raise utili.Problema('err security')
         except utili.Problema as err:
             print(err)

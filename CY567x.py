@@ -57,6 +57,7 @@ class _COMMAND:
         self._cod = cmd
         self._prm = prm
         self._res_q = queue.Queue()
+        self._depot = None
 
     def are_you(self, cmd):
         """
@@ -90,7 +91,13 @@ class _COMMAND:
         :param res: the command's result
         :return: n.a.
         """
-        self._res_q.put_nowait(res)
+        if self._depot is None:
+            self._res_q.put_nowait(res)
+        else:
+            self._res_q.put_nowait(self._depot)
+
+    def save(self, this):
+        self._depot = this
 
 
 def scan_report(adv):
@@ -123,6 +130,7 @@ class CY567x(threading.Thread):
     ABORT_CURRENT_COMMAND = 0xACC0
     # dongle commands (cfr CySmt_CommandLayer.c)
     Cmd_Init_Ble_Stack_Api = 0xFC07
+    Cmd_Get_Bluetooth_Device_Address_Api = 0xFE82
     Cmd_Start_Scan_Api = 0xFE93
     Cmd_Stop_Scan_Api = 0xFE94
     Cmd_Set_Local_Device_Security_Api = 0xFE8D
@@ -154,7 +162,9 @@ class CY567x(threading.Thread):
             cc.EVT_CONNECTION_TERMINATED_NOTIFICATION: self._evt_gap_device_disconnected,
             cc.EVT_REPORT_STACK_MISC_STATUS: self._evt_report_stack_misc_status,
             cc.EVT_CHARACTERISTIC_VALUE_NOTIFICATION: self._evt_gattc_handle_value_ntf,
-            cc.EVT_CHARACTERISTIC_VALUE_INDICATION: self._evt_gattc_handle_value_ind}
+            cc.EVT_CHARACTERISTIC_VALUE_INDICATION: self._evt_gattc_handle_value_ind,
+            cc.EVT_GET_BLUETOOTH_DEVICE_ADDRESS_RESPONSE: self._evt_get_bluetooth_device_address_response
+        }
 
         self.connection = {
             'mtu': 23,
@@ -372,6 +382,11 @@ class CY567x(threading.Thread):
         _, crt, result, _ = struct.unpack('<4H', prm[:8])
         self.gattc_handle_value_ind_cb(crt, result, prm[8:])
 
+    def _evt_get_bluetooth_device_address_response(self, prm):
+        # command, bda, type
+        self.command['curr'].save(prm[2:8])
+
+
     def _send_command_and_wait(self, cod, prm=None):
         # send
         cmd = _COMMAND(cod, prm)
@@ -384,6 +399,20 @@ class CY567x(threading.Thread):
             self.command['todo'].put_nowait(
                 _COMMAND(self.ABORT_CURRENT_COMMAND))
             return False
+
+        return res
+
+    def _send_command_and_wait_data(self, cod, prm=None):
+        # send
+        cmd = _COMMAND(cod, prm)
+        self.command['todo'].put_nowait(cmd)
+
+        # wait
+        res = cmd.get_result()
+        if res is None:
+            # abort
+            self.command['todo'].put_nowait(
+                _COMMAND(self.ABORT_CURRENT_COMMAND))
 
         return res
 
@@ -480,6 +509,16 @@ class CY567x(threading.Thread):
         """
         self._print('init_ble_stack')
         return self._send_command_and_wait(self.Cmd_Init_Ble_Stack_Api)
+
+    def my_address(self, public=True):
+        """
+        get the dongle address
+        :param public: kind of address (public/random)
+        :return: bytearray or None
+        """
+        prm = bytearray([0 if public else 1])
+        return self._send_command_and_wait_data(self.Cmd_Get_Bluetooth_Device_Address_Api, prm=prm)
+
 
     def scan_start(self):
         """
@@ -700,6 +739,12 @@ if __name__ == '__main__':
         print('uart error')
     else:
         print('init: ' + str(DONGLE.init_ble_stack()))
+
+        ma = DONGLE.my_address()
+        if ma is not None:
+            print('I am ' + utili.str_da_mac(ma))
+        else:
+            print('I am ???')
 
         # scan
         print('start: ' + str(DONGLE.scan_start()))

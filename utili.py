@@ -458,9 +458,9 @@ def girino(x):
 
 
 if __name__ == '__main__':
-    for z in range(10):
-        girino(z)
-        time.sleep(.2)
+    for z in range(23):
+        girino(z+1)
+        time.sleep(.1)
     # MILLISEC = 123456789.34
     # print(gomsm((MILLISEC,), (1000, 60, 60, 24)))
     # print(stampaDurata(MILLISEC))
