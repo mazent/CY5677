@@ -12,7 +12,13 @@ class PROTO:
     Knows the communication protocol of CY5677 dongle
     """
 
+    def _print(self, msg):
+        if self.can_print:
+            print(msg)
+
     def __init__(self, nome, primo, secondo):
+        self.can_print = False
+
         # class identifier
         self.name = nome
         # byte headers
@@ -135,19 +141,19 @@ class PROTO_RX(PROTO):
             tot -= 2
 
             if tot != len(prm):
-                print(self.name +
+                self._print(self.name +
                       ' ERR DIM {:04X}[{} != {}]: '.format(evn, tot, len(
                           prm)) + utili.esa_da_ba(prm, ' '))
             else:
                 msg['evn'] = evn
                 msg['prm'] = prm
 
-                print(
+                self._print(
                     self.name +
                     ' {:04X}[{}]: '.format(evn, tot) +
                     utili.esa_da_ba(prm, ' '))
         else:
-            print(self.name + ' ????: ' + utili.esa_da_ba(cosa, ' '))
+            self._print(self.name + ' ????: ' + utili.esa_da_ba(cosa, ' '))
         return msg
 
     def msg_to_string(self, cosa):

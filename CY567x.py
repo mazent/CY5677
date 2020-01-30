@@ -1,16 +1,17 @@
 """
 manages two cypress dongles: CY5677 and CY5670 (old)
 """
-import threading
+import datetime
 import queue
 import struct
-import datetime
+import threading
 
 import serial
 
-import utili
-import cyproto as prt
 import cycost as cc
+import cyproto as prt
+import utili
+from scan_util import scan_report
 
 BAUD_CY5670 = 115200
 BAUD_CY5677 = 921600
@@ -33,21 +34,6 @@ IO_CAPABILITIES = {
     # Platform supports a mechanism through which 6 digit numeric value can be displayed
     # and numeric keyboard that can input the numbers '0' through '9'.
     'KEYBOARD DISPLAY': 4,
-}
-
-ADVERTISEMENT_EVENT_TYPE = {
-    0x00: 'Connectable undirected advertising',
-    0x01: 'Connectable directed advertising',
-    0x02: 'Scannable undirected advertising',
-    0x03: 'Non connectable undirected advertising',
-    0x04: 'Scan Response'
-}
-
-ADDRESS_TYPE = {
-    0x00: 'Public Device Address',
-    0x01: 'Random Device Address',
-    0x02: 'Public Resolvable Address',
-    0x03: 'Random Resolvable Address'
 }
 
 
@@ -97,28 +83,12 @@ class _COMMAND:
             self._res_q.put_nowait(self._depot)
 
     def save(self, this):
+        """
+        save a result
+        :param this:
+        :return:
+        """
         self._depot = this
-
-
-def scan_report(adv):
-    """
-    utility to decompose an advertise (cfr Send_advt_report)
-    :param adv: bytearray
-    :return: scan report
-    """
-    sr = {
-        'adv_type': ADVERTISEMENT_EVENT_TYPE[adv[0]],
-        'bda': utili.str_da_mac(adv[1:7])
-    }
-
-    bda_type, rssi, dim = struct.unpack('<BbB', adv[7:10])
-    sr['bda_type'] = ADDRESS_TYPE[bda_type]
-    sr['rssi'] = rssi
-    sr['data'] = adv[10:]
-    if len(sr['data']) != dim:
-        sr['err'] = 'dim'
-
-    return sr
 
 
 class CY567x(threading.Thread):
@@ -142,6 +112,8 @@ class CY567x(threading.Thread):
     Cmd_Terminate_Connection_Api = 0xFE98
 
     def __init__(self, BAUD=BAUD_CY5677, poll=0.1, porta=None):
+        self._can_print = True
+
         self.proto = {
             'rx': prt.PROTO_RX(),
             'tx': prt.PROTO_TX()
@@ -163,7 +135,9 @@ class CY567x(threading.Thread):
             cc.EVT_REPORT_STACK_MISC_STATUS: self._evt_report_stack_misc_status,
             cc.EVT_CHARACTERISTIC_VALUE_NOTIFICATION: self._evt_gattc_handle_value_ntf,
             cc.EVT_CHARACTERISTIC_VALUE_INDICATION: self._evt_gattc_handle_value_ind,
-            cc.EVT_GET_BLUETOOTH_DEVICE_ADDRESS_RESPONSE: self._evt_get_bluetooth_device_address_response
+            cc.EVT_GET_BLUETOOTH_DEVICE_ADDRESS_RESPONSE:
+                self._evt_get_bluetooth_device_address_response,
+            cc.EVT_SCAN_STOPPED_NOTIFICATION: self._evt_scan_stopped_notification
         }
 
         self.connection = {
@@ -205,12 +179,13 @@ class CY567x(threading.Thread):
         self.close()
 
     def _print(self, msg):
-        adesso = datetime.datetime.now()
-        sadesso = '{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{:03.0f}: '.format(
-            adesso.year, adesso.month, adesso.day, adesso.hour, adesso.minute,
-            adesso.second, adesso.microsecond / 1000.0)
+        if self._can_print:
+            adesso = datetime.datetime.now()
+            sadesso = '{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{:03.0f}: '.format(
+                adesso.year, adesso.month, adesso.day, adesso.hour, adesso.minute,
+                adesso.second, adesso.microsecond / 1000.0)
 
-        print(sadesso + msg)
+            print(sadesso + msg)
 
     def _close_command(self, cod, resul):
         if self.command['curr'] is None:
@@ -293,11 +268,12 @@ class CY567x(threading.Thread):
         """
         _, txo, txt, rxo, rxt = struct.unpack('<5H', prm)
         self._print(
-            'EVT_DATA_LENGTH_CHANGED_NOTIFICATION: connMaxTxOctets={} connMaxTxTime={} connMaxRxOctets={} connMaxRxTime={}'.format(
-                txo,
-                txt,
-                rxo,
-                rxt))
+            'EVT_DATA_LENGTH_CHANGED_NOTIFICATION: ' +
+            'connMaxTxOctets={} '.format(txo) +
+            'connMaxTxTime={} '.format(txt) +
+            'connMaxRxOctets={} '.format(rxo) +
+            'connMaxRxTime={}'.format(rxt)
+        )
 
     def _evt_negotiated_pairing_parameters(self, prm):
         """
@@ -386,14 +362,16 @@ class CY567x(threading.Thread):
         # command, bda, type
         self.command['curr'].save(prm[2:8])
 
+    def _evt_scan_stopped_notification(self, _):
+        self._print('EVT_SCAN_STOPPED_NOTIFICATION')
 
-    def _send_command_and_wait(self, cod, prm=None):
+    def _send_command_and_wait(self, cod, prm=None, to=5):
         # send
         cmd = _COMMAND(cod, prm)
         self.command['todo'].put_nowait(cmd)
 
         # wait
-        res = cmd.get_result()
+        res = cmd.get_result(to)
         if res is None:
             # abort
             self.command['todo'].put_nowait(
@@ -523,8 +501,6 @@ class CY567x(threading.Thread):
     def scan_start(self):
         """
         start scanning for devices
-        :param cb: callback that will receive the advertise
-                   You can call scan_report to decompose it
         :return: bool
         """
         return self._send_command_and_wait(self.Cmd_Start_Scan_Api)
@@ -599,7 +575,7 @@ class CY567x(threading.Thread):
             prm.append(0 if public else 1)
 
             return self._send_command_and_wait(
-                self.Cmd_Establish_Connection_Api, prm=prm)
+                self.Cmd_Establish_Connection_Api, prm=prm, to=10)
 
         # only one device at a time
         return False
