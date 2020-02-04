@@ -82,13 +82,16 @@ class _COMMAND:
         else:
             self._res_q.put_nowait(self._depot)
 
-    def save(self, this):
+    def save(self, data):
         """
         save a result
-        :param this:
+        :param data: bytearray
         :return:
         """
-        self._depot = this
+        if self._depot is None:
+            self._depot = bytearray(data)
+        else:
+            self._depot += bytearray(data)
 
 
 class CY567x(threading.Thread):
@@ -110,6 +113,11 @@ class CY567x(threading.Thread):
     Cmd_Initiate_Pairing_Request_Api = 0xFE99
     Cmd_Pairing_PassKey_Api = 0xFE9B
     Cmd_Terminate_Connection_Api = 0xFE98
+    Cmd_Characteristic_Value_Write_Without_Response_Api = (4 << 7) + 10
+    Cmd_Write_Characteristic_Value_Api = (4 << 7) + 11
+    Cmd_Write_Long_Characteristic_Value_Api = (4 << 7) + 12
+    Cmd_Read_Characteristic_Value_Api = 0xFE06
+    Cmd_Read_Long_Characteristic_Values_Api = 0xFE08
 
     def __init__(self, BAUD=BAUD_CY5677, poll=0.1, porta=None):
         self._can_print = True
@@ -137,7 +145,10 @@ class CY567x(threading.Thread):
             cc.EVT_CHARACTERISTIC_VALUE_INDICATION: self._evt_gattc_handle_value_ind,
             cc.EVT_GET_BLUETOOTH_DEVICE_ADDRESS_RESPONSE:
                 self._evt_get_bluetooth_device_address_response,
-            cc.EVT_SCAN_STOPPED_NOTIFICATION: self._evt_scan_stopped_notification
+            cc.EVT_SCAN_STOPPED_NOTIFICATION: self._evt_scan_stopped_notification,
+            cc.EVT_GATT_ERROR_NOTIFICATION: self._evt_gatt_error_notification,
+            cc.EVT_READ_CHARACTERISTIC_VALUE_RESPONSE: self._evt_gattc_read_rsp,
+            cc.EVT_READ_LONG_CHARACTERISTIC_VALUE_RESPONSE: self._evt_gattc_read_rsp
         }
 
         self.connection = {
@@ -195,6 +206,14 @@ class CY567x(threading.Thread):
             self.command['curr'] = None
         else:
             self._print('wrong cmd')
+
+    def _save_data(self, cod, data):
+        if self.command['curr'] is None:
+            self._print('_save_data: no cmd waiting')
+        elif self.command['curr'].are_you(cod):
+            self.command['curr'].save(data)
+        else:
+            self._print('_save_data: wrong cmd {:04X}'.format(cod))
 
     def _evt_command_status(self, prm):
         cmd, status = struct.unpack('<2H', prm)
@@ -360,10 +379,33 @@ class CY567x(threading.Thread):
 
     def _evt_get_bluetooth_device_address_response(self, prm):
         # command, bda, type
-        self.command['curr'].save(prm[2:8])
+        cmd = struct.unpack('<H', prm[:2])
+        self._save_data(cmd[0], prm[2:8])
 
     def _evt_scan_stopped_notification(self, _):
         self._print('EVT_SCAN_STOPPED_NOTIFICATION')
+
+    def _evt_gatt_error_notification(self, prm):
+        """
+        EVT_GATT_ERROR_NOTIFICATION [8]:
+        0B FE cmd
+        04 00 connHandle
+        12    GattErrResp->opCode
+        15 00 GattErrResp->attrHandle
+        0E    GattErrResp->errorCode
+
+        """
+        cmd, _, _, _, error = struct.unpack('<2HBHB', prm)
+        self._print('EVT_GATT_ERROR_NOTIFICATION err={:02X}'.format(error))
+        self._close_command(cmd, error)
+
+    def _evt_gattc_read_rsp(self, prm):
+        """
+        EVT_READ_CHARACTERISTIC_VALUE_RESPONSE
+        cmd, connHandle, len, dati
+        """
+        cmd, _, _ = struct.unpack('<3H', prm[:6])
+        self._save_data(cmd, prm[6:])
 
     def _send_command_and_wait(self, cod, prm=None, to=5):
         # send
@@ -377,20 +419,6 @@ class CY567x(threading.Thread):
             self.command['todo'].put_nowait(
                 _COMMAND(self.ABORT_CURRENT_COMMAND))
             return False
-
-        return res
-
-    def _send_command_and_wait_data(self, cod, prm=None):
-        # send
-        cmd = _COMMAND(cod, prm)
-        self.command['todo'].put_nowait(cmd)
-
-        # wait
-        res = cmd.get_result()
-        if res is None:
-            # abort
-            self.command['todo'].put_nowait(
-                _COMMAND(self.ABORT_CURRENT_COMMAND))
 
         return res
 
@@ -408,7 +436,6 @@ class CY567x(threading.Thread):
             if self.command['curr'] is None:
                 self.command['curr'] = cmd
 
-                #msg = self.proto['tx'].compose(cmd.cod, cmd.prm)
                 msg = self.proto['tx'].compose(cmd.get())
 
                 self._print('IRP_MJ_WRITE Data: ' + utili.esa_da_ba(msg, ' '))
@@ -494,15 +521,21 @@ class CY567x(threading.Thread):
         :param public: kind of address (public/random)
         :return: bytearray or None
         """
+        self._print('my_address')
         prm = bytearray([0 if public else 1])
-        return self._send_command_and_wait_data(self.Cmd_Get_Bluetooth_Device_Address_Api, prm=prm)
+        rsp = self._send_command_and_wait(
+            self.Cmd_Get_Bluetooth_Device_Address_Api, prm=prm)
+        if not isinstance(rsp, bool):
+            return rsp
 
+        return None
 
     def scan_start(self):
         """
         start scanning for devices
         :return: bool
         """
+        self._print('scan_start')
         return self._send_command_and_wait(self.Cmd_Start_Scan_Api)
 
     def scan_stop(self):
@@ -510,6 +543,7 @@ class CY567x(threading.Thread):
         stop scanning
         :return: bool
         """
+        self._print('scan_stop')
         return self._send_command_and_wait(self.Cmd_Stop_Scan_Api)
 
     def set_local_device_security(self, level):
@@ -612,6 +646,125 @@ class CY567x(threading.Thread):
                 return self.connection['mtu']
 
         return 0
+
+    def _write(self, crt, dati, cmd, to=5):
+        """
+        writes with the common limit of mtu - 3
+
+        CYBLE_EVT_GATTC_WRITE_RSP -> comm complete
+        CYBLE_EVT_GATTC_ERROR_RSP -> EVT_GATT_ERROR_NOTIFICATION
+        """
+        mtu = self.connection['mtu']
+        if len(dati) > mtu - 3:
+            dati = dati[:mtu - 3]
+
+        prm = struct.pack(
+            '<3H',
+            self.connection['cyBle_connHandle'],
+            crt,
+            len(dati))
+        prm += dati
+        return self._send_command_and_wait(cmd, prm=prm, to=to)
+
+    def write_without_response(self, crt, dati):
+        """
+        bt 4.2 - vol 3 - part G - 4.9.1
+
+        :param crt: handle
+        :param dati: bytearray
+        :return: bool
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('write_without_response')
+
+            return self._write(
+                crt, dati, self.Cmd_Characteristic_Value_Write_Without_Response_Api)
+
+        return False
+
+    def write_characteristic_value(self, crt, dati, to=5):
+        """
+        bt 4.2 - vol 3 - part G - 4.9.3
+
+        :param crt: handle
+        :param dati: bytearray
+        :return: bool
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('write_characteristic_value')
+
+            return self._write(
+                crt, dati, self.Cmd_Write_Characteristic_Value_Api, to)
+
+        return False
+
+    def write_long_characteristic_value(self, crt, dati, ofs=0):
+        """
+        bt 4.2 - vol 3 - part G - 4.9.4
+
+        :param crt: handle
+        :param dati: bytearray
+        :param ofs: starting position
+        :return: bool
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('write_long_characteristic_value')
+
+            prm = struct.pack(
+                '<4H',
+                self.connection['cyBle_connHandle'],
+                crt,
+                ofs,
+                len(dati))
+            prm += dati
+            return self._send_command_and_wait(
+                self.Cmd_Write_Long_Characteristic_Value_Api, prm=prm)
+
+        return False
+
+    def read_characteristic_value(self, crt):
+        """
+        bt 4.2 - vol 3 - part G - 4.8.1
+
+        max mtu - 1 byte
+
+        :param crt: handle
+        :return: bytearray or None
+
+        CYBLE_EVT_GATTC_READ_RSP
+        CYBLE_EVT_GATTC_ERROR_RSP
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('read_characteristic_value')
+
+            prm = struct.pack('<2H', self.connection['cyBle_connHandle'], crt)
+
+            res = self._send_command_and_wait(
+                self.Cmd_Read_Characteristic_Value_Api, prm=prm)
+            if not isinstance(res, bool):
+                return res
+
+        return None
+
+    def read_long_characteristic_value(self, crt, ofs=0):
+        """
+        bt 4.2 - vol 3 - part G - 4.8.3
+
+        :param crt: handle
+        :return: bytearray or None
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('read_long_characteristic_value')
+
+            prm = struct.pack(
+                '<3H', self.connection['cyBle_connHandle'], crt, ofs)
+
+            res = self._send_command_and_wait(
+                self.Cmd_Read_Long_Characteristic_Values_Api, prm=prm)
+            if not isinstance(res, bool):
+                return res
+
+        return None
 
     def initiate_pairing_request(self):
         """

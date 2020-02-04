@@ -22,6 +22,9 @@ FAKE_SECRET = bytes([
     0xD8, 0x29, 0xFE, 0x83, 0xDD, 0x3C, 0xCE, 0x71
 ])
 
+CYBLE_SERVICE_AUTHOR_CHAR_HANDLE = 0x0015
+CYBLE_SERVICE_WDOG_CHAR_HANDLE = 0x0018
+
 
 class GHOST(CY567x.CY567x):
     """
@@ -29,12 +32,17 @@ class GHOST(CY567x.CY567x):
     """
 
     def __init__(self, porta=None):
+        self.response = None
         self.authReq = False
         self.pairReq = False
+
+        self.priv = None
 
         self.scan_list = []
 
         CY567x.CY567x.__init__(self, porta=porta)
+
+        self.mio = None
 
         try:
             if not self.is_ok():
@@ -48,6 +56,13 @@ class GHOST(CY567x.CY567x):
 
             if not self.set_local_device_security('3'):
                 raise utili.Problema('err security')
+
+            mio = self.my_address()
+            if mio is None:
+                raise utili.Problema('err bdaddr')
+
+            self.mio = mio
+            print('io sono ' + utili.str_da_mac(mio))
         except utili.Problema as err:
             print(err)
 
@@ -69,13 +84,13 @@ class GHOST(CY567x.CY567x):
         :param secret: bytes
         :return: integer
         """
-        priv = prv.PRIVACY(secret)
-        x = priv.hash(utili.mac_da_str(bda))
+        self.priv = prv.PRIVACY(secret)
+        x = self.priv.hash(utili.mac_da_str(bda))
         pqb = struct.unpack('<I', x[:4])
         return pqb[0] % 1000000
 
-    def connect(self, bda):
-        return super().connect(bda, public=False)
+    def connect(self, bda, public=False):
+        return super().connect(bda, public)
 
     def scan_progress_cb(self, adv):
         sr = scan_util.scan_report(adv)
@@ -96,6 +111,18 @@ class GHOST(CY567x.CY567x):
 
     def gap_passkey_entry_request_cb(self):
         self.pairReq = True
+
+    def gattc_handle_value_ntf_cb(self, crt, ntf):
+        print('crt={:04X}'.format(crt))
+        if crt == CYBLE_SERVICE_AUTHOR_CHAR_HANDLE:
+            challenge = self.priv.decrypt(ntf)
+            if challenge is not None:
+                pt = bytearray(self.mio)
+                bc = challenge[6:]
+                for elem in bc:
+                    elem = (~elem) & 0xFF
+                    pt.append(elem)
+                self.response = self.priv.crypt(pt)
 
 
 DESCRIZIONE = \
@@ -176,6 +203,16 @@ if __name__ == '__main__':
 
             if not DISPO.pairing_passkey(pk):
                 raise utili.Problema('err passkey')
+
+            while DISPO.response is None:
+                time.sleep(.1)
+
+            if not DISPO.write_characteristic_value(
+                    CYBLE_SERVICE_AUTHOR_CHAR_HANDLE, DISPO.response):
+                raise utili.Problema('err autor')
+
+            if not DISPO.write_characteristic_value(CYBLE_SERVICE_WDOG_CHAR_HANDLE, bytearray([0]*5)):
+                raise utili.Problema('err write')
 
         except utili.Problema as err:
             print(err)
