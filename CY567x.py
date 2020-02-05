@@ -11,7 +11,7 @@ import serial
 import cycost as cc
 import cyproto as prt
 import utili
-from scan_util import scan_report
+from scan_util import scan_report, scan_advertise
 
 BAUD_CY5670 = 115200
 BAUD_CY5677 = 921600
@@ -118,6 +118,7 @@ class CY567x(threading.Thread):
     Cmd_Write_Long_Characteristic_Value_Api = (4 << 7) + 12
     Cmd_Read_Characteristic_Value_Api = 0xFE06
     Cmd_Read_Long_Characteristic_Values_Api = 0xFE08
+    Cmd_Tool_Disconnected_Api = 0xFC08
 
     def __init__(self, BAUD=BAUD_CY5677, poll=0.1, porta=None):
         self._can_print = True
@@ -178,7 +179,7 @@ class CY567x(threading.Thread):
                 rtscts=True)
 
             # posso girare
-            threading.Thread.__init__(self)
+            threading.Thread.__init__(self, daemon=True)
             self.start()
 
         except serial.SerialException as err:
@@ -393,7 +394,6 @@ class CY567x(threading.Thread):
         12    GattErrResp->opCode
         15 00 GattErrResp->attrHandle
         0E    GattErrResp->errorCode
-
         """
         cmd, _, _, _, error = struct.unpack('<2HBHB', prm)
         self._print('EVT_GATT_ERROR_NOTIFICATION err={:02X}'.format(error))
@@ -481,6 +481,13 @@ class CY567x(threading.Thread):
                             'PLEASE MANAGE ' +
                             self.proto['rx'].msg_to_string(msg))
         self._print('muoio')
+
+        # switch dongle to initial configuration
+        cmd = _COMMAND(self.Cmd_Tool_Disconnected_Api)
+        msg = self.proto['tx'].compose(cmd.get())
+
+        self._print('IRP_MJ_WRITE Data: ' + utili.esa_da_ba(msg, ' '))
+        self.uart.write(msg)
 
     def close(self):
         """
@@ -801,7 +808,8 @@ class CY567x(threading.Thread):
         :return: n.a.
         """
         sr = scan_report(adv)
-        self._print(str(sr))
+        adv = scan_advertise(sr['data'])
+        self._print(str(adv))
 
     def gap_auth_req_cb(self, ai):
         """

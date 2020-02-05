@@ -9,6 +9,7 @@ import CY567x
 import scan_util
 import utili
 import privacy as prv
+import crcmod
 
 
 FAKE_SECRET = bytes([
@@ -22,9 +23,8 @@ FAKE_SECRET = bytes([
     0xD8, 0x29, 0xFE, 0x83, 0xDD, 0x3C, 0xCE, 0x71
 ])
 
-CYBLE_SERVICE_AUTHOR_CHAR_HANDLE = 0x0015
+CYBLE_SERVICE_AUTHOR_CHAR_HANDLE = 0x0016
 CYBLE_SERVICE_WDOG_CHAR_HANDLE = 0x0018
-
 
 class GHOST(CY567x.CY567x):
     """
@@ -38,6 +38,7 @@ class GHOST(CY567x.CY567x):
 
         self.priv = None
 
+        self.srvdata = None
         self.scan_list = []
 
         CY567x.CY567x.__init__(self, porta=porta)
@@ -66,11 +67,29 @@ class GHOST(CY567x.CY567x):
         except utili.Problema as err:
             print(err)
 
-    def find(self, to=3):
+    def find(self, cp, to=3):
         """
         find ghosts
         :return: dict
         """
+        srvdata = bytearray()
+
+        crc = crcmod.Crc(0x11021, 0xC681, False, 0x0000)
+        crc.update(cp.encode('ascii'))
+        cpcrc = crc.digest()
+        srvdata.append(cpcrc[1])
+        srvdata.append(cpcrc[0])
+
+        prog = int(cp[5:])
+        tmp = bytearray(struct.pack('<I', prog))
+        del tmp[-1]
+
+        srvdata += tmp
+        print('srvdata: ' + utili.esa_da_ba(srvdata, ' '))
+
+        self.srvdata = srvdata
+
+
         self.scan_list = {}
         if self.scan_start():
             time.sleep(to)
@@ -92,6 +111,25 @@ class GHOST(CY567x.CY567x):
     def connect(self, bda, public=False):
         return super().connect(bda, public)
 
+    def authorize(self):
+        chl = self.read_characteristic_value(CYBLE_SERVICE_AUTHOR_CHAR_HANDLE)
+        if chl is None:
+            return False
+
+        challenge = self.priv.decrypt(chl)
+        if challenge is None:
+            return False
+
+        pt = bytearray(self.mio)
+        bc = challenge[6:]
+        for elem in bc:
+            elem = (~elem) & 0xFF
+            pt.append(elem)
+        response = self.priv.crypt(pt)
+
+        return self.write_characteristic_value(
+            CYBLE_SERVICE_AUTHOR_CHAR_HANDLE, response)
+
     def scan_progress_cb(self, adv):
         sr = scan_util.scan_report(adv)
         if sr['adv_type'] != 'Connectable undirected advertising':
@@ -99,12 +137,14 @@ class GHOST(CY567x.CY567x):
 
         adv = scan_util.scan_advertise(sr['data'])
         for elem in adv:
-            if elem[0] != 'srv128':
+            if elem[0] != 'srvd128':
                 continue
 
             if elem[1] == '4A7A3045-BCD8-4ACA-B5AE-95FB82EEB222':
-                print(sr['bda'] + ' {} dB'.format(sr['rssi']))
-                self.scan_list[sr['bda']] = sr['rssi']
+                srvdata = elem[2]
+                if srvdata == self.srvdata:
+                    print(sr['bda'] + ' {} dB '.format(sr['rssi']))
+                    self.scan_list[sr['bda']] = sr['rssi']
 
     def gap_auth_req_cb(self, ai):
         self.authReq = True
@@ -112,17 +152,17 @@ class GHOST(CY567x.CY567x):
     def gap_passkey_entry_request_cb(self):
         self.pairReq = True
 
-    def gattc_handle_value_ntf_cb(self, crt, ntf):
-        print('crt={:04X}'.format(crt))
-        if crt == CYBLE_SERVICE_AUTHOR_CHAR_HANDLE:
-            challenge = self.priv.decrypt(ntf)
-            if challenge is not None:
-                pt = bytearray(self.mio)
-                bc = challenge[6:]
-                for elem in bc:
-                    elem = (~elem) & 0xFF
-                    pt.append(elem)
-                self.response = self.priv.crypt(pt)
+    # def gattc_handle_value_ntf_cb(self, crt, ntf):
+    #     print('crt={:04X}'.format(crt))
+    #     if crt == CYBLE_SERVICE_AUTHOR_CHAR_HANDLE:
+    #         challenge = self.priv.decrypt(ntf)
+    #         if challenge is not None:
+    #             pt = bytearray(self.mio)
+    #             bc = challenge[6:]
+    #             for elem in bc:
+    #                 elem = (~elem) & 0xFF
+    #                 pt.append(elem)
+    #             self.response = self.priv.crypt(pt)
 
 
 DESCRIZIONE = \
@@ -167,11 +207,13 @@ if __name__ == '__main__':
     # test
     DISPO = GHOST()
 
+    PRD = 'XXXpy359687'
+
     if DISPO.is_ok():
         try:
             MAC = None
 
-            dispi = DISPO.find()
+            dispi = DISPO.find(PRD)
             for dispo in dispi:
                 print('trovato ' + dispo + ' {} dB'.format(dispi[dispo]))
                 if MAC is None:
@@ -204,11 +246,10 @@ if __name__ == '__main__':
             if not DISPO.pairing_passkey(pk):
                 raise utili.Problema('err passkey')
 
-            while DISPO.response is None:
-                time.sleep(.1)
+            # while DISPO.response is None:
+            #     time.sleep(.1)
 
-            if not DISPO.write_characteristic_value(
-                    CYBLE_SERVICE_AUTHOR_CHAR_HANDLE, DISPO.response):
+            if not DISPO.authorize():
                 raise utili.Problema('err autor')
 
             if not DISPO.write_characteristic_value(CYBLE_SERVICE_WDOG_CHAR_HANDLE, bytearray([0]*5)):

@@ -57,7 +57,7 @@ def _at_service_data128(data):
 
     sid.reverse()
     sid = uuid.UUID(bytes=bytes(sid))
-    return 'srvd32', str(sid).upper(), data
+    return 'srvd128', str(sid).upper(), data
 
 
 def _at_name(data):
