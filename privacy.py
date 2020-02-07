@@ -7,6 +7,8 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+from cryptography.hazmat.primitives.ciphers.aead import AESCCM
+
 
 class PRIVACY:
     """
@@ -159,6 +161,60 @@ class PRIVACY:
             return pia[:dim]
 
         return None
+
+class CYBLE_AESCCM:
+    """
+    To be used with cyble internal functions
+    """
+
+    def __init__(self, key16):
+        self.aesccm = AESCCM(key16, tag_length=4)
+
+    def CyBle_AesCcmEncrypt(self, nonce13, plaintext):
+        """
+        Acts like the cyble function
+
+        :param nonce13: bytes
+        :param plaintext: bytes (1..27)
+        :return: ciphertext (bytes)
+        """
+        return self.aesccm.encrypt(nonce13, plaintext, bytes([1]))
+
+    def CyBle_AesCcmDecrypt(self, nonce13, ciphertext):
+        """
+        Acts like the cyble function
+
+        :param nonce13: bytes
+        :param ciphertext: bytes (1..27)
+        :return: plaintext (bytes)
+        """
+        return self.aesccm.decrypt(nonce13, ciphertext, bytes([1]))
+
+    def crypt(self, cosa):
+        """
+        receives plaintext and returns the ciphertext
+
+        :param cosa: bytes/str
+        :return: bytes
+        """
+        if isinstance(cosa, str):
+            cosa = bytes(cosa.encode('ascii'))
+
+        # an handful of random bytes
+        ahorb = bytes(secrets.token_bytes(13))
+
+        return ahorb + self.CyBle_AesCcmEncrypt(ahorb, cosa)
+
+    def decrypt(self, cosa):
+        """
+        receives ciphertext and returns the plaintext
+
+        :param cosa: bytes
+        :return: bytes
+        """
+
+        return self.CyBle_AesCcmDecrypt(bytes(cosa[:13]), bytes(cosa[13:]))
+
 
 if __name__ == '__main__':
     import utili
