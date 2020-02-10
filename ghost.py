@@ -13,18 +13,19 @@ import crcmod
 
 
 FAKE_SECRET = bytes([
-    0x0F, 0x82, 0x97, 0x5A, 0xD1, 0x98, 0xE0, 0xC7,
-    0x9B, 0x2E, 0x1D, 0x1A, 0xC4, 0x35, 0xBF, 0x6E,
-    0x0D, 0x7D, 0xDA, 0xF4, 0x8D, 0x7F, 0x13, 0x6A,
-    0x3C, 0x32, 0xEF, 0x30, 0x46, 0x7C, 0xD6, 0xB7,
-    0x88, 0x08, 0x5E, 0xD0, 0xBA, 0x0F, 0x86, 0x30,
-    0x2C, 0xF8, 0x22, 0x2C, 0x46, 0x19, 0x89, 0xF8,
-    0xE7, 0xCE, 0xAC, 0xBF, 0x98, 0xDD, 0xFA, 0x2A,
-    0xD8, 0x29, 0xFE, 0x83, 0xDD, 0x3C, 0xCE, 0x71
+    0xA3, 0xED, 0x47, 0x19, 0xDF, 0x11, 0xB6, 0x8E,
+    0x22, 0x66, 0x6A, 0x83, 0x9C, 0x8C, 0x38, 0x6F,
+    0x4D, 0xC0, 0x30, 0xFB, 0xBF, 0x41, 0xFA, 0xFA,
+    0xDC, 0x02, 0x03, 0xAD, 0x5A, 0x88, 0x75, 0xD3,
+    0x43, 0x40, 0x33, 0xD2, 0xEE, 0x9B, 0x24, 0x8A,
+    0xA0, 0x51, 0x26, 0x33, 0xD0, 0x6B, 0x70, 0x39,
+    0xDA, 0xB5, 0xF9, 0xE5, 0x9B, 0x86, 0x13, 0x2F,
+    0x2E, 0xB0, 0xA6, 0x12, 0xA1, 0x1B, 0xEB, 0xAF
 ])
 
-CYBLE_SERVICE_AUTHOR_CHAR_HANDLE = 0x0016
-CYBLE_SERVICE_WDOG_CHAR_HANDLE = 0x0018
+# Verificare che siano uguali a quelle in BT_custom.h
+CYBLE_SERVICE_AUTHOR_CHAR_HANDLE = 0x0018
+CYBLE_SERVICE_WDOG_CHAR_HANDLE = 0x001A
 
 class GHOST(CY567x.CY567x):
     """
@@ -70,7 +71,7 @@ class GHOST(CY567x.CY567x):
     def find(self, cp, to=3):
         """
         find ghosts
-        :return: dict
+        :return: bda (bytearray) or None
         """
         srvdata = bytearray()
 
@@ -89,12 +90,16 @@ class GHOST(CY567x.CY567x):
 
         self.srvdata = srvdata
 
-
         self.scan_list = {}
         if self.scan_start():
             time.sleep(to)
             self.scan_stop()
-        return self.scan_list
+
+        for dispo in self.scan_list:
+            print('trovato ' + dispo + ' {} dB'.format(self.scan_list[dispo]))
+            return dispo
+
+        return None
 
     def compute_passkey(self, bda, secret):
         """
@@ -205,54 +210,47 @@ if __name__ == '__main__':
     #     criterio = lambda cnt, lim: cnt < lim
 
     # test
-    DISPO = GHOST()
+    ghost = GHOST()
 
     PRD = 'XXXpy359687'
 
-    if DISPO.is_ok():
+    if ghost.is_ok():
         try:
-            MAC = None
-
-            dispi = DISPO.find(PRD)
-            for dispo in dispi:
-                print('trovato ' + dispo + ' {} dB'.format(dispi[dispo]))
-                if MAC is None:
-                    MAC = dispo
-
+            MAC = ghost.find(PRD)
             if MAC is None:
                 raise utili.Problema('no disp')
 
-            pk = DISPO.compute_passkey(MAC, FAKE_SECRET)
+            pk = ghost.compute_passkey(MAC, FAKE_SECRET)
             print('passkey={:06d}'.format(pk))
 
-            if not DISPO.connect(MAC):
+            if not ghost.connect(MAC):
                 raise utili.Problema('err connect')
             print('connesso')
 
-            while not DISPO.authReq:
+            while not ghost.authReq:
                 time.sleep(.1)
 
-            mtu = DISPO.exchange_gatt_mtu_size(MTU)
+            mtu = ghost.exchange_gatt_mtu_size(MTU)
             if mtu == 0:
                 raise utili.Problema('err mtu')
             print('mtu {}'.format(mtu))
 
-            if not DISPO.initiate_pairing_request():
+            if not ghost.initiate_pairing_request():
                 raise utili.Problema('err pair req')
 
-            while not DISPO.pairReq:
+            while not ghost.pairReq:
                 time.sleep(.1)
 
-            if not DISPO.pairing_passkey(pk):
+            if not ghost.pairing_passkey(pk):
                 raise utili.Problema('err passkey')
 
             # while DISPO.response is None:
             #     time.sleep(.1)
 
-            if not DISPO.authorize():
+            if not ghost.authorize():
                 raise utili.Problema('err autor')
 
-            if not DISPO.write_characteristic_value(CYBLE_SERVICE_WDOG_CHAR_HANDLE, bytearray([0]*5)):
+            if not ghost.write_characteristic_value(CYBLE_SERVICE_WDOG_CHAR_HANDLE, bytearray([0])):
                 raise utili.Problema('err write')
 
         except utili.Problema as err:
@@ -260,5 +258,5 @@ if __name__ == '__main__':
 
         time.sleep(5)
 
-        DISPO.disconnect()
-        DISPO.close()
+        ghost.disconnect()
+        ghost.close()
