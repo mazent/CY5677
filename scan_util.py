@@ -83,7 +83,7 @@ def _at_service_class_uuid16(data):
 
 def _at_service_class_uuid32(data):
     srv = struct.unpack('<I', data)[0]
-    return 'srv32', '{:04X}'.format(srv)
+    return 'srv32', '{:08X}'.format(srv)
 
 
 def scan_advertise(data):
@@ -157,23 +157,23 @@ _ADDRESS_TYPE = {
 }
 
 if __name__ == '__main__':
-    """
-    riceve l'uid in formato testo (da profiles->custom service, p.e. 4A7A3045-BCD8-4ACA-B5AE-95FB82EEB222)
-    e lo stampa come vettore di byte (0x22, 0xB2, 0xEE, 0x82, 0xFB, 0x95, 0xAE, 0xB5, 0xCA, 0x4A, 0xD8, 0xBC, 0x45, 0x30, 0x7A, 0x4A)
-    """
+    # riceve l'uid in formato testo (da profiles->custom service,
+    # p.e. 4A7A3045-BCD8-4ACA-B5AE-95FB82EEB222)
+    # e lo stampa come vettore di byte (0x22, 0xB2, 0xEE, 0x82, 0xFB, 0x95,
+    # 0xAE, 0xB5, 0xCA, 0x4A, 0xD8, 0xBC, 0x45, 0x30, 0x7A, 0x4A)
+
     if len(sys.argv) != 2:
         print("passare l'uuid")
     else:
         iuid = uuid.UUID('{' + sys.argv[1] + '}')
 
-        data = bytearray(iuid.bytes)
-        data.reverse()
+        _uid = bytearray(iuid.bytes)
+        _uid.reverse()
 
-        srv = uuid.UUID(bytes=bytes(data))
-        uid = bytearray(srv.bytes)
+        uid_srv = uuid.UUID(bytes=bytes(_uid))
+        uid = bytearray(uid_srv.bytes)
         cuid = ''
         for x in uid:
             cuid += '0x{:02X}, '.format(x)
 
         print(cuid)
-
