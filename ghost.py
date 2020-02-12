@@ -5,6 +5,7 @@ Manages ghost devices
 import time
 import struct
 import queue
+import threading
 
 import crcmod
 
@@ -32,13 +33,86 @@ srv_norm = '4A7A3045-BCD8-4ACA-B5AE-95FB82EEB222'
 # Verificare che siano uguali a quelle in BT_custom.h
 # srv_norm
 CYBLE_SERVICE_AUTHOR_CHAR_HANDLE = 0x0018
-CYBLE_SERVICE_WDOG_CHAR_HANDLE = 0x001A
+CYBLE_SERVICE_CMD_CHAR_HANDLE = 0x001A
 # srv_conf
 CYBLE_CONFIG_AUTHOR_CHAR_HANDLE = 0x0012
 CYBLE_CONFIG_CMD_CHAR_HANDLE = 0x0014
 
 
-class GHOST_CONF:
+class GHOST_COMMAND:
+    """
+    knows hot to send commands
+    """
+
+    def cmd_void_void(self, char, cmd, to=3):
+        # pylint: disable=R0201,W0613
+        """
+        execute a command without data to send and receive
+        pylint is disabled because of overriding
+        :param char: handle
+        :param cmd: opcode
+        :param to: timeout
+        :return: bool
+        """
+        return False
+
+    def cmd_void_rsp(self, char, cmd, dim=None, to=3):
+        # pylint: disable=R0201,W0613
+        """
+        execute a command without data to send but with data to receive
+        pylint is disabled because of overriding
+        :param char: handle
+        :param cmd: opcode
+        :param to: timeout
+        :return: bytearray / None
+        """
+        return bytearray()
+
+    def cmd_prm_void(self, char, cmd, prm, to=3):
+        # pylint: disable=R0201,W0613
+        """
+        execute a command with data to send but nothing to receive
+        pylint is disabled because of overriding
+        :param char: handle
+        :param cmd: opcode
+        :param prm: bytearray
+        :param to: timeout
+        :return: bool
+        """
+        return False
+
+
+class GHOST_NORM(GHOST_COMMAND):
+    """
+    collects commands valid only during NORM phase
+    """
+
+    def clear_alarm(self, to=3):
+        """
+        resets the alarm
+        :param to: timeout
+        :return: bool
+        """
+        return self.cmd_void_void(CYBLE_SERVICE_CMD_CHAR_HANDLE, 0x58, to=to)
+
+    def goto_CONF(self, to=3):
+        """
+        Set CONF as the next phase
+        :param to: timeout
+        :return: bool
+        """
+        return self.cmd_void_void(CYBLE_SERVICE_CMD_CHAR_HANDLE, 0xE6, to=to)
+
+    def force_alarm(self, to=3):
+        """
+        force the alarm
+        :param to: timeout
+        :return: bool
+        """
+        return self.cmd_void_void(CYBLE_SERVICE_CMD_CHAR_HANDLE, 0xA0, to=to)
+
+
+class GHOST_CONF(GHOST_COMMAND):
     """
     collects commands valid only during CONF phase
     """
@@ -49,6 +123,12 @@ class GHOST_CONF:
         :param to: timeout
         :return: tuple or None
         """
+        prm = self.cmd_void_rsp(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x8C, dim=6, to=to)
+        if prm is not None:
+            return struct.unpack('<3H', prm)
+
+        return None
 
     def write_times(self, Tnp, Tp, Tall, to=3):
         """
@@ -59,6 +139,9 @@ class GHOST_CONF:
         :param to: timeout
         :return: bool
         """
+        prm = struct.pack('<3H', Tnp, Tp, Tall)
+        return self.cmd_prm_void(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x1A, prm, to=to)
 
     def goto_NORM(self, to=3):
         """
@@ -66,6 +149,7 @@ class GHOST_CONF:
         :param to: timeout
         :return: bool
         """
+        return self.cmd_void_void(CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xC0, to=to)
 
     def goto_PROD(self, to=3):
         """
@@ -73,25 +157,43 @@ class GHOST_CONF:
         :param to: timeout
         :return: bool
         """
+        return self.cmd_void_void(CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xD2, to=to)
 
 
-class GHOST(CY567x.CY567x, GHOST_CONF):
+class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
     """
-    Knows ghost's commands
+    Knows ghost's internals
     """
+
+    def _reset(self, coda):
+        tq = self.sincro['rsp']
+        if coda == 'SCAN':
+            tq = self.sincro['scan']
+
+        while not tq.empty():
+            try:
+                tq.get_nowait()
+                #tq.task_done()
+            except queue.Empty:
+                break
 
     def __init__(self, porta=None):
-        self.response = None
-        self.authReq = False
-        self.pairReq = False
+        self.sincro = {
+            # list of devices
+            'scan': queue.Queue(),
+            # signaled by gap_auth_req_cb
+            'authReq': threading.Event(),
+            # signaled by gap_passkey_entry_request_cb
+            'pairReq': threading.Event(),
+            # command response
+            'rsp': queue.Queue()
+        }
 
         self.priv = None
 
         self.crc = crcmod.Crc(0x11021, 0xC681, False, 0x0000)
-        self.rsp = queue.Queue()
 
         self.srvdata = None
-        self.scan_list = []
 
         CY567x.CY567x.__init__(self, porta=porta)
 
@@ -122,9 +224,9 @@ class GHOST(CY567x.CY567x, GHOST_CONF):
     def find(self, cp, to=3):
         """
         find the ghost with a specific serial number
-        :param cp: serial number
+        :param cp: serial number (i.e. XXXAT000000)
         :param to: timeout
-        :return: tuple bda (bytearray) + mode or None
+        :return: dict (cfr scan_report)
         """
         srvdata = bytearray()
 
@@ -142,20 +244,19 @@ class GHOST(CY567x.CY567x, GHOST_CONF):
         print('srvdata: ' + utili.esa_da_ba(srvdata, ' '))
 
         self.srvdata = srvdata
-
-        self.scan_list = {}
+        self._reset('SCAN')
         if self.scan_start():
-            time.sleep(to)
+            try:
+                ud = self.sincro['scan'].get(True, to)
+                self.scan_stop()
+                return ud
+            except queue.Empty:
+                pass
             self.scan_stop()
-
-        for dispo in self.scan_list:
-            rssi, mode = self.scan_list[dispo]
-            print('trovato ' + dispo + ' {} dB '.format(rssi) + mode)
-            return dispo, mode
 
         return None
 
-    def compute_passkey(self, bda, secret):
+    def _compute_passkey(self, bda, secret):
         """
         returns the passkey for a ghost with the specified mac and secret
         :param bda: string (aka mac address)
@@ -167,13 +268,61 @@ class GHOST(CY567x.CY567x, GHOST_CONF):
         pqb = struct.unpack('<I', x[:4])
         return pqb[0] % 1000000
 
-    def connect(self, bda, public=False):
-        return super().connect(bda, public)
+    def connect_to(self, bda, mode, secret, to=3):
+        """
+        execute connection with authentication and authorization
+        :param bda: mac address (bytearray)
+        :param mode: 'CONF' o 'NORM'
+        :param secret: bytearray
+        :param to: timeout
+        :return: bool
+        """
+        pk = self._compute_passkey(bda, secret)
+        print('passkey={:06d}'.format(pk))
 
-    def authorize(self, car):
+        self.sincro['authReq'].clear()
+        self.sincro['pairReq'].clear()
+
+        try:
+            # connection
+            if not self.connect(bda, public=False):
+                raise utili.Problema("err connect")
+
+            # authentication
+            if not self.sincro['authReq'].wait(to):
+                raise utili.Problema("err autReq")
+
+            mtu = self.exchange_gatt_mtu_size(70)
+            if mtu == 0:
+                raise utili.Problema('err mtu')
+            print('mtu {}'.format(mtu))
+
+            if not self.initiate_pairing_request():
+                raise utili.Problema('err pair req')
+
+            if not self.sincro['pairReq'].wait(to):
+                raise utili.Problema("err pairReq")
+
+            if not self.pairing_passkey(pk):
+                raise utili.Problema('err passkey')
+
+            # authorization
+            crt_ = CYBLE_SERVICE_AUTHOR_CHAR_HANDLE
+            if mode == 'CONF':
+                crt_ = CYBLE_CONFIG_AUTHOR_CHAR_HANDLE
+            if not self._authorize(crt_):
+                raise utili.Problema('err autor')
+
+            return True
+
+        except utili.Problema as err:
+            print(err)
+            return False
+
+    def _authorize(self, car):
         """
         execute the challenge/response procedure
-        :return:
+        :return: bool
         """
         chl = self.read_characteristic_value(car)
         if chl is None:
@@ -190,8 +339,7 @@ class GHOST(CY567x.CY567x, GHOST_CONF):
             pt.append(_elem)
         response = self.priv.crypt(pt)
 
-        return self.write_characteristic_value(
-            car, response)
+        return self.write_characteristic_value(car, response)
 
     def _create_command(self, cmd, prm=None):
         fcrc = self.crc.new()
@@ -218,14 +366,14 @@ class GHOST(CY567x.CY567x, GHOST_CONF):
 
         return None
 
-    def _cmd_void_void(self, char, cmd, to=3):
+    def cmd_void_void(self, char, cmd, to=3):
         msg = self._create_command(cmd)
 
         try:
             if not self.write_characteristic_value(char, msg):
                 raise utili.Problema('? write_characteristic_value ?')
 
-            _crt, ntf = self.rsp.get(True, to)
+            _crt, ntf = self.sincro['rsp'].get(True, to)
             if _crt != char:
                 raise utili.Problema('? crt ?')
 
@@ -243,58 +391,51 @@ class GHOST(CY567x.CY567x, GHOST_CONF):
                 print(err)
             return False
 
-    # ------ CONF ------------------------------------------------------------
-
-    def read_times(self, to=3):
-        cmd = self._create_command(0x8C)
+    def cmd_void_rsp(self, char, cmd, dim=None, to=3):
+        msg = self._create_command(cmd)
 
         try:
-            if not self.write_characteristic_value(
-                    CYBLE_CONFIG_CMD_CHAR_HANDLE, cmd):
+            if not self.write_characteristic_value(char, msg):
                 raise utili.Problema('? write_characteristic_value ?')
 
-            _crt, ntf = self.rsp.get(True, to)
-            if _crt != CYBLE_CONFIG_CMD_CHAR_HANDLE:
+            _crt, ntf = self.sincro['rsp'].get(True, to)
+            if _crt != char:
                 raise utili.Problema('? crt ?')
 
             rsp = self._extract_response(ntf)
             if rsp is None:
                 raise utili.Problema('? rsp ?')
 
-            cmd = rsp['cmd']
-            if cmd != 0x8C:
+            if rsp['cmd'] != cmd:
                 raise utili.Problema('? cmd ?')
 
-            prm = rsp['prm']
-            if len(prm) != 6:
-                raise utili.Problema('? prm ?')
+            if dim is not None:
+                if dim != len(rsp['prm']):
+                    raise utili.Problema('? prm ?')
 
-            return struct.unpack('<3H', prm)
+            return rsp['prm']
 
         except (queue.Empty, utili.Problema) as err:
             if isinstance(err, utili.Problema):
                 print(err)
             return None
 
-    def write_times(self, Tnp, Tp, Tall, to=3):
-        prm = struct.pack('<3H', Tnp, Tp, Tall)
-        cmd = self._create_command(0x1A, prm=prm)
+    def cmd_prm_void(self, char, cmd, prm, to=3):
+        msg = self._create_command(cmd, prm=prm)
 
         try:
-            if not self.write_characteristic_value(
-                    CYBLE_CONFIG_CMD_CHAR_HANDLE, cmd):
+            if not self.write_characteristic_value(char, msg):
                 raise utili.Problema('? write_characteristic_value ?')
 
-            _crt, ntf = self.rsp.get(True, to)
-            if _crt != CYBLE_CONFIG_CMD_CHAR_HANDLE:
+            _crt, ntf = self.sincro['rsp'].get(True, to)
+            if _crt != char:
                 raise utili.Problema('? crt ?')
 
             rsp = self._extract_response(ntf)
             if rsp is None:
                 raise utili.Problema('? rsp ?')
 
-            cmd = rsp['cmd']
-            if cmd != 0x1A:
+            if rsp['cmd'] != cmd:
                 raise utili.Problema('? cmd ?')
 
             return True
@@ -303,12 +444,6 @@ class GHOST(CY567x.CY567x, GHOST_CONF):
             if isinstance(err, utili.Problema):
                 print(err)
             return False
-
-    def goto_NORM(self, to=3):
-        return self._cmd_void_void(CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xC0, to=to)
-
-    def goto_PROD(self, to=3):
-        return self._cmd_void_void(CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xD2, to=to)
 
     def scan_progress_cb(self, adv):
         sr = scan_util.scan_report(adv)
@@ -324,19 +459,18 @@ class GHOST(CY567x.CY567x, GHOST_CONF):
                 srvdata = _elem[2]
                 if srvdata == self.srvdata:
                     print(sr['bda'] + ' {} dB '.format(sr['rssi']))
-                    self.scan_list[sr['bda']] = \
-                        (sr['rssi'],
-                         'NORM' if _elem[1] == srv_norm else 'CONF')
+                    sr['fase'] = 'NORM' if _elem[1] == srv_norm else 'CONF'
+                    self.sincro['scan'].put_nowait(sr)
 
     def gap_auth_req_cb(self, ai):
-        self.authReq = True
+        self.sincro['authReq'].set()
 
     def gap_passkey_entry_request_cb(self):
-        self.pairReq = True
+        self.sincro['pairReq'].set()
 
     def gattc_handle_value_ntf_cb(self, crt, ntf):
         print('ntf crt={:04X}'.format(crt))
-        self.rsp.put_nowait((crt, ntf))
+        self.sincro['rsp'].put_nowait((crt, ntf))
 
 
 DESCRIZIONE = \
@@ -389,41 +523,12 @@ if __name__ == '__main__':
             if elem is None:
                 raise utili.Problema('no disp')
 
-            MAC = elem[0]
-            MODE = elem[1]
+            MAC = elem['bda']
+            MODE = elem['fase']
 
-            pk = ghost.compute_passkey(MAC, FAKE_SECRET)
-            print('passkey={:06d}'.format(pk))
-
-            if not ghost.connect(MAC):
+            if not ghost.connect_to(MAC, MODE, FAKE_SECRET):
                 raise utili.Problema('err connect')
             print('connesso')
-
-            while not ghost.authReq:
-                time.sleep(.1)
-
-            mtu = ghost.exchange_gatt_mtu_size(MTU)
-            if mtu == 0:
-                raise utili.Problema('err mtu')
-            print('mtu {}'.format(mtu))
-
-            if not ghost.initiate_pairing_request():
-                raise utili.Problema('err pair req')
-
-            while not ghost.pairReq:
-                time.sleep(.1)
-
-            if not ghost.pairing_passkey(pk):
-                raise utili.Problema('err passkey')
-
-            # while DISPO.response is None:
-            #     time.sleep(.1)
-
-            crt_ = CYBLE_SERVICE_AUTHOR_CHAR_HANDLE
-            if MODE == 'CONF':
-                crt_ = CYBLE_CONFIG_AUTHOR_CHAR_HANDLE
-            if not ghost.authorize(crt_):
-                raise utili.Problema('err autor')
 
             if MODE == 'CONF':
                 tempi = ghost.read_times()
@@ -440,10 +545,15 @@ if __name__ == '__main__':
                 if not ghost.goto_NORM():
                     raise utili.Problema('err goto_NORM')
                 print('goto_NORM OK')
+            else:
+                if not ghost.clear_alarm():
+                    raise utili.Problema('err clear_alarm')
+                print('clear_alarm OK')
 
-            # if not ghost.write_characteristic_value(
-            #         CYBLE_SERVICE_WDOG_CHAR_HANDLE, bytearray([0])):
-            #     raise utili.Problema('err write')
+                if not ghost.goto_CONF():
+                    raise utili.Problema('err goto_CONF')
+                print('goto_CONF OK')
+
 
         except utili.Problema as err:
             print(err)
