@@ -14,16 +14,17 @@ import scan_util
 import utili
 import privacy as prv
 
+FAKE_PRD = 'XXXpy413589'
 
 FAKE_SECRET = bytes([
-    0xA3, 0xED, 0x47, 0x19, 0xDF, 0x11, 0xB6, 0x8E,
-    0x22, 0x66, 0x6A, 0x83, 0x9C, 0x8C, 0x38, 0x6F,
-    0x4D, 0xC0, 0x30, 0xFB, 0xBF, 0x41, 0xFA, 0xFA,
-    0xDC, 0x02, 0x03, 0xAD, 0x5A, 0x88, 0x75, 0xD3,
-    0x43, 0x40, 0x33, 0xD2, 0xEE, 0x9B, 0x24, 0x8A,
-    0xA0, 0x51, 0x26, 0x33, 0xD0, 0x6B, 0x70, 0x39,
-    0xDA, 0xB5, 0xF9, 0xE5, 0x9B, 0x86, 0x13, 0x2F,
-    0x2E, 0xB0, 0xA6, 0x12, 0xA1, 0x1B, 0xEB, 0xAF
+    0x1D, 0x2B, 0xE0, 0x8B, 0xF0, 0x37, 0x1C, 0x60,
+    0x8B, 0xC3, 0xC7, 0x5A, 0x66, 0x6D, 0x89, 0x66,
+    0xA2, 0x43, 0x4D, 0x5F, 0x60, 0xA6, 0xCA, 0x91,
+    0xDF, 0x3B, 0x10, 0x22, 0x84, 0xBD, 0x72, 0x1F,
+    0x06, 0xA2, 0x30, 0xD2, 0xD4, 0x5C, 0xAB, 0x57,
+    0x98, 0x8A, 0x92, 0xC2, 0x02, 0x86, 0x13, 0xAB,
+    0x23, 0xC7, 0x1A, 0x98, 0xBE, 0x0B, 0x8D, 0x25,
+    0x12, 0xB3, 0x59, 0xBF, 0x95, 0xAF, 0x5D, 0xF5
 ])
 
 srv_conf = 'C18594D9-DFF5-4552-89F8-0F2940D1E32D'
@@ -158,6 +159,54 @@ class GHOST_CONF(GHOST_COMMAND):
         :return: bool
         """
         return self.cmd_void_void(CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xD2, to=to)
+
+    def read_tel(self, to=3):
+        """
+        send the command to read the phone number that will receive the alarm sms
+        :param to: timeout
+        :return: string
+        """
+        prm = self.cmd_void_rsp(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xF3, to=to)
+        if prm is not None:
+            return prm.decode('ascii')
+
+        return None
+
+    def write_tel(self, tel, to=3):
+        """
+        send the command to write the phone number that will receive the alarm sms
+        :param tel: string
+        :param to: timeout
+        :return: bool
+        """
+        prm = tel.encode('ascii')
+        return self.cmd_prm_void(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x32, prm, to=to)
+
+    def read_fsms(self, to=3):
+        """
+        send the command to read the sms format string
+        :param to: timeout
+        :return: string
+        """
+        prm = self.cmd_void_rsp(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xEB, to=to)
+        if prm is not None:
+            return prm.decode('ascii')
+
+        return None
+
+    def write_fsms(self, sms_fs, to=3):
+        """
+        send the command to write the sms format string
+        :param sms_fs: string
+        :param to: timeout
+        :return: bool
+        """
+        prm = sms_fs.encode('ascii')
+        return self.cmd_prm_void(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x78, prm, to=to)
 
 
 class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
@@ -515,11 +564,9 @@ if __name__ == '__main__':
     # test
     ghost = GHOST()
 
-    PRD = 'XXXpy359687'
-
     if ghost.is_ok():
         try:
-            elem = ghost.find(PRD)
+            elem = ghost.find(FAKE_PRD)
             if elem is None:
                 raise utili.Problema('no disp')
 
@@ -542,6 +589,20 @@ if __name__ == '__main__':
                     raise utili.Problema('err write_times')
                 print('write_times OK')
 
+                ntel = ghost.read_tel()
+                if ntel is None:
+                    raise utili.Problema('err read_tel')
+                print('ntel=<' + ntel + '>')
+
+                fsms = ghost.read_fsms()
+                if fsms is None:
+                    raise utili.Problema('err read_fsms')
+                print('fsms=<' + fsms + '>')
+
+                if not ghost.write_fsms('data=%d, ora=%h, lat=%a, lon=%o'):
+                    raise utili.Problema('err write_fsms')
+                print('nuovo fsms')
+
                 if not ghost.goto_NORM():
                     raise utili.Problema('err goto_NORM')
                 print('goto_NORM OK')
@@ -553,7 +614,6 @@ if __name__ == '__main__':
                 if not ghost.goto_CONF():
                     raise utili.Problema('err goto_CONF')
                 print('goto_CONF OK')
-
 
         except utili.Problema as err:
             print(err)
