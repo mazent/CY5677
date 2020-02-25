@@ -2,7 +2,6 @@
 Manages ghost devices
 """
 
-import time
 import struct
 import queue
 import threading
@@ -13,19 +12,6 @@ import CY567x
 import scan_util
 import utili
 import privacy as prv
-
-FAKE_PRD = 'XXXpy413589'
-
-FAKE_SECRET = bytes([
-    0x1D, 0x2B, 0xE0, 0x8B, 0xF0, 0x37, 0x1C, 0x60,
-    0x8B, 0xC3, 0xC7, 0x5A, 0x66, 0x6D, 0x89, 0x66,
-    0xA2, 0x43, 0x4D, 0x5F, 0x60, 0xA6, 0xCA, 0x91,
-    0xDF, 0x3B, 0x10, 0x22, 0x84, 0xBD, 0x72, 0x1F,
-    0x06, 0xA2, 0x30, 0xD2, 0xD4, 0x5C, 0xAB, 0x57,
-    0x98, 0x8A, 0x92, 0xC2, 0x02, 0x86, 0x13, 0xAB,
-    0x23, 0xC7, 0x1A, 0x98, 0xBE, 0x0B, 0x8D, 0x25,
-    0x12, 0xB3, 0x59, 0xBF, 0x95, 0xAF, 0x5D, 0xF5
-])
 
 srv_conf = 'C18594D9-DFF5-4552-89F8-0F2940D1E32D'
 srv_norm = '4A7A3045-BCD8-4ACA-B5AE-95FB82EEB222'
@@ -230,6 +216,8 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
         self.sincro = {
             # list of devices
             'scan': queue.Queue(),
+            # user list of devices
+            'user': None,
             # signaled by gap_auth_req_cb
             'authReq': threading.Event(),
             # signaled by gap_passkey_entry_request_cb
@@ -269,6 +257,32 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
             print('io sono ' + utili.str_da_mac(mio))
         except utili.Problema as err:
             print(err)
+
+    def start_find(self, coda):
+        """
+        find all the ghosts around you
+        :param coda: the queue that will receive ghost's info
+        :return: bool
+        """
+        if self.sincro['user'] is None:
+            if self.scan_start():
+                self.sincro['user'] = coda
+
+            return self.sincro['user'] is not None
+
+        return False
+
+    def stop_find(self):
+        """
+        stops the generic scan
+        :return: bool
+        """
+        if self.sincro['user'] is not None:
+            if self.scan_stop():
+                self.sincro['user'] = None
+                return True
+            return False
+        return True
 
     def find(self, cp, to=3):
         """
@@ -511,11 +525,27 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
                 continue
 
             if _elem[1] in (srv_norm, srv_conf):
-                srvdata = _elem[2]
-                if srvdata == self.srvdata:
-                    print(sr['bda'] + ' {} dB '.format(sr['rssi']))
-                    sr['fase'] = 'NORM' if _elem[1] == srv_norm else 'CONF'
-                    self.sincro['scan'].put_nowait(sr)
+                sr['fase'] = 'NORM' if _elem[1] == srv_norm else 'CONF'
+                if self.srvdata is None:
+                    # find all ghosts
+                    sd = _elem[2]
+                    cp = struct.unpack('<I', sd[:4])[0]
+                    nome = ''
+                    for _ in range(5):
+                        x = cp & 0x3F
+                        nome = nome + chr(x + 0x41)
+                        cp >>= 6
+                    sd = sd[4:]
+                    sd.append(0)
+                    prog = struct.unpack('<I', sd)[0]
+                    sr['prod'] = nome + '{:06d}'.format(prog)
+                    self.sincro['user'].put_nowait(sr)
+                else:
+                    # find a ghost
+                    srvdata = _elem[2]
+                    if srvdata == self.srvdata:
+                        print(sr['bda'] + ' {} dB '.format(sr['rssi']))
+                        self.sincro['scan'].put_nowait(sr)
 
     def gap_auth_req_cb(self, ai):
         self.sincro['authReq'].set()
@@ -536,6 +566,20 @@ DESCRIZIONE = \
 if __name__ == '__main__':
 
     import argparse
+    import time
+
+    FAKE_PRD = 'XXXpy413589'
+
+    FAKE_SECRET = bytes([
+        0x1D, 0x2B, 0xE0, 0x8B, 0xF0, 0x37, 0x1C, 0x60,
+        0x8B, 0xC3, 0xC7, 0x5A, 0x66, 0x6D, 0x89, 0x66,
+        0xA2, 0x43, 0x4D, 0x5F, 0x60, 0xA6, 0xCA, 0x91,
+        0xDF, 0x3B, 0x10, 0x22, 0x84, 0xBD, 0x72, 0x1F,
+        0x06, 0xA2, 0x30, 0xD2, 0xD4, 0x5C, 0xAB, 0x57,
+        0x98, 0x8A, 0x92, 0xC2, 0x02, 0x86, 0x13, 0xAB,
+        0x23, 0xC7, 0x1A, 0x98, 0xBE, 0x0B, 0x8D, 0x25,
+        0x12, 0xB3, 0x59, 0xBF, 0x95, 0xAF, 0x5D, 0xF5
+    ])
 
     # argomenti
     argom = argparse.ArgumentParser(
