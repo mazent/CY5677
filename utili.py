@@ -406,18 +406,18 @@ def _cod_finto(dim):
     return cod
 
 
-def cod_scheda(pre):
+def cod_prod(pre):
     """
-    Crea un finto codice scheda
+    Crea un finto codice prodotto
     :param pre: prefisso (dipende dal prodotto)
     :return: una stringa
     """
     return pre + 'py' + _cod_finto(6)
 
 
-def cod_prod():
+def cod_scheda():
     """
-    Crea un finto codice prodotto
+    Crea un finto codice scheda
     :return:
     """
     return _cod_finto(12)
