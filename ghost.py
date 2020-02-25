@@ -273,35 +273,41 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
     def find(self, cp, to=3):
         """
         find the ghost with a specific serial number
-        :param cp: serial number (i.e. XXXAT000000)
+        :param cp: serial number (i.e. 'XXXAT000000')
         :param to: timeout
-        :return: dict (cfr scan_report)
+        :return: dict (cfr scan_report) or None
         """
-        srvdata = bytearray()
+        # compute its service data
+        uc = cp[:5].upper()
+        cpc = 0
+        base = ord('A')
+        for i in range(-1, -6, -1):
+            cpc <<= 6
+            cpc += ord(uc[i]) - base
 
-        fcrc = self.crc.new()
-        fcrc.update(cp.encode('ascii'))
-        cpcrc = fcrc.digest()
-        srvdata.append(cpcrc[1])
-        srvdata.append(cpcrc[0])
+        sdata = struct.pack('<I', cpc)
 
         prog = int(cp[5:])
         tmp = bytearray(struct.pack('<I', prog))
         del tmp[-1]
 
-        srvdata += tmp
-        print('srvdata: ' + utili.esa_da_ba(srvdata, ' '))
+        sdata += tmp
 
-        self.srvdata = srvdata
+        print('sdata: ' + utili.esa_da_ba(sdata, ' '))
+
+        self.srvdata = sdata
+
+        # empty scan queue
         self._reset('SCAN')
+
+        # find it
         if self.scan_start():
             try:
                 ud = self.sincro['scan'].get(True, to)
                 self.scan_stop()
                 return ud
             except queue.Empty:
-                pass
-            self.scan_stop()
+                self.scan_stop()
 
         return None
 
@@ -611,9 +617,9 @@ if __name__ == '__main__':
                     raise utili.Problema('err clear_alarm')
                 print('clear_alarm OK')
 
-                if not ghost.goto_CONF():
-                    raise utili.Problema('err goto_CONF')
-                print('goto_CONF OK')
+                # if not ghost.goto_CONF():
+                #     raise utili.Problema('err goto_CONF')
+                # print('goto_CONF OK')
 
         except utili.Problema as err:
             print(err)
