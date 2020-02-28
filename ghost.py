@@ -5,6 +5,7 @@ Manages ghost devices
 import struct
 import queue
 import threading
+import time
 
 import crcmod
 
@@ -24,6 +25,7 @@ CYBLE_SERVICE_CMD_CHAR_HANDLE = 0x001A
 # srv_conf
 CYBLE_CONFIG_AUTHOR_CHAR_HANDLE = 0x0012
 CYBLE_CONFIG_CMD_CHAR_HANDLE = 0x0014
+CYBLE_CONFIG_CMD_CLIENT_CHARACTERISTIC_CONFIGURATION_DESC_HANDLE = 0x0015
 
 
 class GHOST_COMMAND:
@@ -103,6 +105,14 @@ class GHOST_CONF(GHOST_COMMAND):
     """
     collects commands valid only during CONF phase
     """
+
+    def enable_not_ind(self):
+        """
+        enables notifications and indications
+        :return: bool
+        """
+        msg = struct.pack('<H', 0x0003)
+        return self.write_characteristic_value(CYBLE_CONFIG_CMD_CLIENT_CHARACTERISTIC_CONFIGURATION_DESC_HANDLE, msg)
 
     def read_times(self, to=3):
         """
@@ -265,6 +275,7 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
         :return: bool
         """
         if self.sincro['user'] is None:
+            self.srvdata = None
             if self.scan_start():
                 self.sincro['user'] = coda
 
@@ -337,7 +348,7 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
         pqb = struct.unpack('<I', x[:4])
         return pqb[0] % 1000000
 
-    def connect_to(self, bda, mode, secret, to=3):
+    def connect_to(self, bda, mode, secret, to=10):
         """
         execute connection with authentication and authorization
         :param bda: mac address (bytearray)
@@ -374,6 +385,9 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
 
             if not self.pairing_passkey(pk):
                 raise utili.Problema('err passkey')
+
+            # wait for the challenge
+            time.sleep(1)
 
             # authorization
             crt_ = CYBLE_SERVICE_AUTHOR_CHAR_HANDLE
@@ -556,6 +570,10 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
     def gattc_handle_value_ntf_cb(self, crt, ntf):
         print('ntf crt={:04X}'.format(crt))
         self.sincro['rsp'].put_nowait((crt, ntf))
+
+    def gattc_handle_value_ind_cb(self, crt, result, ind):
+        print('ind crt={:04X} res={}'.format(crt, result))
+        self.sincro['rsp'].put_nowait((crt, ind))
 
 
 DESCRIZIONE = \

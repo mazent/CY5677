@@ -6,7 +6,7 @@
 
 from __future__ import print_function
 
-import binascii
+import logging
 import threading
 import random
 import string
@@ -446,6 +446,34 @@ class CRONOMETRO():
 
     def durata(self):
         return self.tempo() - self.inizio
+
+class LOGGA:
+
+    def __init__(self, logger=None):
+        if logger is None:
+            self.logger = None
+        else:
+            self.logger = logging.getLogger(logger)
+
+    def debug(self, msg):
+        if self.logger is not None:
+            self.logger.debug(msg)
+
+    def info(self, msg):
+        if self.logger is not None:
+            self.logger.info(msg)
+
+    def warning(self, msg):
+        if self.logger is not None:
+            self.logger.warning(msg)
+
+    def error(self, msg):
+        if self.logger is not None:
+            self.logger.error(msg)
+
+    def critical(self, msg):
+        if self.logger is not None:
+            self.logger.critical(msg)
 
 def girino(x):
     _girino = ['-', '\\', '|', '/', '*']
