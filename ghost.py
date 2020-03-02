@@ -156,6 +156,28 @@ class GHOST_CONF(GHOST_COMMAND):
         """
         return self.cmd_void_void(CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xD2, to=to)
 
+    def read_ver(self, to=3):
+        """
+        send the command to read the version
+        :param to: timeout
+        :return: string or None
+        """
+        prm = self.cmd_void_rsp(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x57, dim=4, to=to)
+        if prm is not None:
+            glob = struct.unpack('<I', prm)[0]
+            mino = glob & 0x00FFFFFF
+            magg = glob >> 24
+
+            sver = ''
+            if magg & (1 << 7):
+                magg = magg & ~(1 << 7)
+                sver = 'dbg '
+
+            return sver + '{}.{}'.format(magg, mino)
+
+        return None
+
     def read_tel(self, to=3):
         """
         send the command to read the phone number that will receive the alarm sms
@@ -246,6 +268,8 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
 
         self.mio = None
 
+        self.disc = None
+
         try:
             if not self.is_ok():
                 raise utili.Problema('not OK')
@@ -267,6 +291,9 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
             print('io sono ' + utili.str_da_mac(mio))
         except utili.Problema as err:
             print(err)
+
+    def set_disc(self, func):
+        self.disc = func
 
     def start_find(self, coda):
         """
@@ -574,6 +601,10 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
     def gattc_handle_value_ind_cb(self, crt, result, ind):
         print('ind crt={:04X} res={}'.format(crt, result))
         self.sincro['rsp'].put_nowait((crt, ind))
+
+    def gap_device_disconnected_cb(self, reason):
+        if self.disc is not None:
+            self.disc(reason)
 
 
 DESCRIZIONE = \
