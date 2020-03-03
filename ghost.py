@@ -549,6 +549,18 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
         msg = struct.pack('<H', 0x0003)
         return self.write_characteristic_value(char, msg)
 
+    def _find_all_ghosts(self, sd, un_sr):
+        cp = struct.unpack('<I', sd[:4])[0]
+        nome = ''
+        for _ in range(5):
+            x = cp & 0x3F
+            nome = nome + chr(x + 0x41)
+            cp >>= 6
+        sd = sd[4:]
+        sd.append(0)
+        prog = struct.unpack('<I', sd)[0]
+        un_sr['prod'] = nome + '{:06d}'.format(prog)
+        self.sincro['user'].put_nowait(un_sr)
 
     def scan_progress_cb(self, adv):
         sr = scan_util.scan_report(adv)
@@ -563,19 +575,7 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
             if _elem[1] in (srv_norm, srv_conf):
                 sr['fase'] = 'NORM' if _elem[1] == srv_norm else 'CONF'
                 if self.srvdata is None:
-                    # find all ghosts
-                    sd = _elem[2]
-                    cp = struct.unpack('<I', sd[:4])[0]
-                    nome = ''
-                    for _ in range(5):
-                        x = cp & 0x3F
-                        nome = nome + chr(x + 0x41)
-                        cp >>= 6
-                    sd = sd[4:]
-                    sd.append(0)
-                    prog = struct.unpack('<I', sd)[0]
-                    sr['prod'] = nome + '{:06d}'.format(prog)
-                    self.sincro['user'].put_nowait(sr)
+                    self._find_all_ghosts(_elem[2], sr)
                 else:
                     # find a ghost
                     srvdata = _elem[2]
