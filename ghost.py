@@ -30,7 +30,7 @@ CYBLE_CONFIG_CMD_CLIENT_CHARACTERISTIC_CONFIGURATION_DESC_HANDLE = 0x0015
 
 class GHOST_COMMAND:
     """
-    knows hot to send commands
+    collects commands
     """
 
     def cmd_void_void(self, char, cmd, to=3):
@@ -69,6 +69,15 @@ class GHOST_COMMAND:
         :return: bool
         """
         return False
+
+    def enable_notify_indicate(self, char):
+        # pylint: disable=R0201,W0613
+        """
+        enables notifications and indications
+        :return: bool
+        """
+        return False
+
 
 
 class GHOST_NORM(GHOST_COMMAND):
@@ -111,8 +120,7 @@ class GHOST_CONF(GHOST_COMMAND):
         enables notifications and indications
         :return: bool
         """
-        msg = struct.pack('<H', 0x0003)
-        return self.write_characteristic_value(CYBLE_CONFIG_CMD_CLIENT_CHARACTERISTIC_CONFIGURATION_DESC_HANDLE, msg)
+        return self.enable_notify_indicate(CYBLE_CONFIG_CMD_CLIENT_CHARACTERISTIC_CONFIGURATION_DESC_HANDLE)
 
     def read_times(self, to=3):
         """
@@ -293,6 +301,11 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
             print(err)
 
     def set_disc(self, func):
+        """
+        set the callback that will be called when disconnection occurs
+        :param func:
+        :return:
+        """
         self.disc = func
 
     def start_find(self, coda):
@@ -476,9 +489,7 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
 
         return None
 
-    def cmd_void_void(self, char, cmd, to=3):
-        msg = self._create_command(cmd)
-
+    def _send_cmd_and_rx_rsp(self, char, msg, to, cmd):
         try:
             if not self.write_characteristic_value(char, msg):
                 raise utili.Problema('? write_characteristic_value ?')
@@ -494,30 +505,28 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
             if rsp['cmd'] != cmd:
                 raise utili.Problema('? cmd ?')
 
-            return True
+            return rsp
 
         except (queue.Empty, utili.Problema) as err:
             if isinstance(err, utili.Problema):
                 print(err)
-            return False
+            return None
+
+    def cmd_void_void(self, char, cmd, to=3):
+        msg = self._create_command(cmd)
+
+        rsp = self._send_cmd_and_rx_rsp(char, msg, to, cmd)
+        return rsp is not None
+
 
     def cmd_void_rsp(self, char, cmd, dim=None, to=3):
         msg = self._create_command(cmd)
 
         try:
-            if not self.write_characteristic_value(char, msg):
-                raise utili.Problema('? write_characteristic_value ?')
+            rsp = self._send_cmd_and_rx_rsp(char, msg, to, cmd)
 
-            _crt, ntf = self.sincro['rsp'].get(True, to)
-            if _crt != char:
-                raise utili.Problema('? crt ?')
-
-            rsp = self._extract_response(ntf)
             if rsp is None:
-                raise utili.Problema('? rsp ?')
-
-            if rsp['cmd'] != cmd:
-                raise utili.Problema('? cmd ?')
+                raise utili.Problema('? error ?')
 
             if dim is not None:
                 if dim != len(rsp['prm']):
@@ -533,27 +542,13 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
     def cmd_prm_void(self, char, cmd, prm, to=3):
         msg = self._create_command(cmd, prm=prm)
 
-        try:
-            if not self.write_characteristic_value(char, msg):
-                raise utili.Problema('? write_characteristic_value ?')
+        rsp = self._send_cmd_and_rx_rsp(char, msg, to, cmd)
+        return rsp is not None
 
-            _crt, ntf = self.sincro['rsp'].get(True, to)
-            if _crt != char:
-                raise utili.Problema('? crt ?')
+    def enable_notify_indicate(self, char):
+        msg = struct.pack('<H', 0x0003)
+        return self.write_characteristic_value(char, msg)
 
-            rsp = self._extract_response(ntf)
-            if rsp is None:
-                raise utili.Problema('? rsp ?')
-
-            if rsp['cmd'] != cmd:
-                raise utili.Problema('? cmd ?')
-
-            return True
-
-        except (queue.Empty, utili.Problema) as err:
-            if isinstance(err, utili.Problema):
-                print(err)
-            return False
 
     def scan_progress_cb(self, adv):
         sr = scan_util.scan_report(adv)
@@ -615,7 +610,6 @@ DESCRIZIONE = \
 if __name__ == '__main__':
 
     import argparse
-    import time
 
     FAKE_PRD = 'XXXpy413589'
 
