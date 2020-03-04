@@ -206,6 +206,10 @@ class GHOST_CONF(GHOST_COMMAND):
         :param to: timeout
         :return: bool
         """
+        if tel is None:
+            return self.cmd_void_void(
+                CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x32, to=to)
+
         prm = tel.encode('ascii')
         return self.cmd_prm_void(
             CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x32, prm, to=to)
@@ -230,14 +234,83 @@ class GHOST_CONF(GHOST_COMMAND):
         :param to: timeout
         :return: bool
         """
+        if sms_fs is None:
+            return self.cmd_void_void(
+                CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x78, to=to)
+
         prm = sms_fs.encode('ascii')
         return self.cmd_prm_void(
             CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x78, prm, to=to)
 
+    def read_apn(self, to=3):
+        """
+        send the command to read the APN
+        :param to: timeout
+        :return: string
+        """
+        prm = self.cmd_void_rsp(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x49, to=to)
+        if prm is not None:
+            return prm.decode('ascii')
+
+        return None
+
+    def write_apn(self, net_apn, to=3):
+        """
+        send the command to write the APN
+        :param net_apn: string
+        :param to: timeout
+        :return: bool
+        """
+        if net_apn is None:
+            return self.cmd_void_void(
+                CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x24, to=to)
+
+        prm = net_apn.encode('ascii')
+        return self.cmd_prm_void(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x24, prm, to=to)
+
+    def read_broker(self, to=3):
+        """
+        send the command to read the broker's data
+        :param to: timeout
+        :return: dict
+        """
+        prm = self.cmd_void_rsp(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x96, to=to)
+        if prm is not None:
+            broker = {}
+            if len(prm) > 2:
+                porta = struct.unpack('<H', prm[:2])
+                indi = prm[2:]
+
+                broker['port'] = porta[0]
+                broker['address'] = indi.decode('ascii')
+            return broker
+
+        return None
+
+    def write_broker(self, addr, port, to=3):
+        """
+        send the command to update the broker's data
+        :param addr: string or None
+        :param port: int
+        :param to: timeout
+        :return: bool
+        """
+        if addr is None:
+            return self.cmd_void_void(
+                CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x63, to=to)
+
+        prm = struct.pack('<H', port & 0xFFFF)
+        prm += addr.encode('ascii')
+        return self.cmd_prm_void(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x63, prm, to=to)
+
 
 class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM):
     """
-    Knows ghost's internals
+    Uses CY567x to implement ghost's interfaces
     """
 
     def _reset(self, coda):
