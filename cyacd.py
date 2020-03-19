@@ -1,9 +1,10 @@
 """
-cfr inst-dir\Cypress\PSoC Creator\version\PSoC Creator\cybootloaderutils
+cfr inst-dir/Cypress/PSoC Creator/version/PSoC Creator/cybootloaderutils
 """
 
 import string
 import struct
+
 
 class CYACD:
     def __init__(self):
@@ -46,15 +47,19 @@ class CYACD:
         csum = 1 + ((~csum) & 0xFF)
         csum &= 0xFF
 
-        return {'arrayId': arrayId, 'rowNum': rowNum, 'checksum': csum, 'row': row}
+        return {
+            'arrayId': arrayId,
+            'rowNum': rowNum,
+            'checksum': csum,
+            'row': row
+        }
 
     def _convert(self, char):
         if char in string.digits:
             return ord(char) - ord('0')
-        else:
-            char = char.upper()
-            if char in string.hexdigits:
-                return ord(char) - ord('A') + 10
+        char = char.upper()
+        if char in string.hexdigits:
+            return ord(char) - ord('A') + 10
         return 0
 
     def _bytes_from_char(self, a_row):
@@ -104,4 +109,3 @@ if __name__ == '__main__':
         cyacd.load(sys.argv[1])
 
         print(cyacd.rows)
-

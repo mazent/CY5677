@@ -3,7 +3,6 @@ update a device with cypres's bootloader profile
 """
 
 import queue
-import time
 import struct
 
 import CY567x
@@ -11,24 +10,23 @@ import scan_util
 import cyacd
 import utili
 
+
 class EXAMPLE(CY567x.CY567x):
     DIM = 137
 
-    SOP = 0x01  # Start of Packet
-    EOP = 0x17  # End of Packet
+    # Start of Packet
+    SOP = 0x01
 
-    COMMAND_CHECKSUM     = 0x31		# Verify the checksum for the bootloadable project
-    COMMAND_REPORT_SIZE  = 0x32		# Report the programmable portions of flash
-    # COMMAND_APP_STATUS   = 0x33		# Gets status info about the provided app status     
-    # COMMAND_ERASE        = 0x34		# Erase the specified flash row                      
-    # COMMAND_SYNC         = 0x35		# Sync the bootloader and host application           
-    # COMMAND_APP_ACTIVE   = 0x36		# Sets the active application                        
-    COMMAND_DATA         = 0x37		# Queue up a block of data for programming
-    COMMAND_ENTER        = 0x38		# Enter the bootloader
-    COMMAND_PROGRAM      = 0x39		# Program the specified row
-    COMMAND_VERIFY       = 0x3A		# Compute flash row checksum for verification
-    COMMAND_EXIT         = 0x3B		# Exits the bootloader & resets the chip
-    # COMMAND_GET_METADATA = 0x3C		# Reports the metadata for a selected application    
+    # End of Packet
+    EOP = 0x17
+
+    COMMAND_CHECKSUM = 0x31
+    COMMAND_REPORT_SIZE = 0x32
+    COMMAND_DATA = 0x37
+    COMMAND_ENTER = 0x38
+    COMMAND_PROGRAM = 0x39
+    COMMAND_VERIFY = 0x3A
+    COMMAND_EXIT = 0x3B
 
     def __init__(self, porta=None):
         self.sincro = {
@@ -118,9 +116,9 @@ class EXAMPLE(CY567x.CY567x):
 
         self.sincro['blr'].put_nowait(ntf)
 
-    def _bl_csum(self, dati):
+    def _bl_csum(self, pckh):
         csum = 0
-        for elem in dati:
+        for elem in pckh:
             csum += elem
         csum = (~csum) & 0xFFFF
         csum += 1
@@ -141,17 +139,13 @@ class EXAMPLE(CY567x.CY567x):
         csumc = self._bl_csum(pkt[:-3])
         if csumc != csump:
             return None
-        msg = {
-            'code': pkt[1],
-            'data': pkt[4:-3]
-        }
+        msg = {'code': pkt[1], 'data': pkt[4:-3]}
         return msg
 
     def bl_enter(self, blc, to=10):
         """
         Enter the bootloader
-        :param blc: from discover_all_characteristics
-                {'attr': 32, 'prop': ['Write', 'Notify'], 'value': 33, 'uuid128': '00060001-F8CE-11E4-ABF4-0002A5D5C51B'}
+        :param blc: from discover_all_characteristics {'attr', 'prop', 'value', 'uuid128'}
         :param to: timeout
         :return: dict
         """
@@ -170,7 +164,11 @@ class EXAMPLE(CY567x.CY567x):
                 if msg['code'] != 0:
                     return None
                 val = struct.unpack('<I4B', msg['data'])
-                return { 'SiliconId': val[0], 'Revision': val[1], 'Version': '{}.{}.{}'.format(val[2], val[3], val[4])}
+                return {
+                    'SiliconId': val[0],
+                    'Revision': val[1],
+                    'Version': '{}.{}.{}'.format(val[2], val[3], val[4])
+                }
             except queue.Empty:
                 pass
 
@@ -250,7 +248,8 @@ class EXAMPLE(CY567x.CY567x):
         if data is not None:
             dim += len(data)
 
-        msg = struct.pack('<BBHBH', self.SOP, self.COMMAND_PROGRAM, dim, aid, rown)
+        msg = struct.pack('<BBHBH', self.SOP, self.COMMAND_PROGRAM, dim, aid,
+                          rown)
         if data is not None:
             msg += data[:dim]
         msg += self._bl_pkt_trail(msg)
@@ -281,7 +280,8 @@ class EXAMPLE(CY567x.CY567x):
         if self.blc is None:
             return None
 
-        msg = struct.pack('<BBHBH', self.SOP, self.COMMAND_VERIFY, 3, aid, rown)
+        msg = struct.pack('<BBHBH', self.SOP, self.COMMAND_VERIFY, 3, aid,
+                          rown)
         msg += self._bl_pkt_trail(msg)
 
         self._reset('BLR')
@@ -339,7 +339,8 @@ class EXAMPLE(CY567x.CY567x):
         msg = struct.pack('<BBH', self.SOP, self.COMMAND_EXIT, 0)
         msg += self._bl_pkt_trail(msg)
 
-        return self.write_characteristic_value(self.blc, msg)
+        return self.write_characteristic_value(self.blc, msg, to=to)
+
 
 if __name__ == '__main__':
     #mac = "00:A0:50:C4:A4:2D"
@@ -419,7 +420,7 @@ if __name__ == '__main__':
             raise utili.Problema('err start bl')
         print('SiliconId={:08X}'.format(cdd['SiliconId']))
         print('Revision={}'.format(cdd['Revision']))
-        print('Version='+cdd['Version'])
+        print('Version=' + cdd['Version'])
 
         if cdd['SiliconId'] != cyacd.sil_id:
             raise utili.Problema('err siliconid diversi')
@@ -448,7 +449,9 @@ if __name__ == '__main__':
             if rcs is None:
                 raise utili.Problema('err verifica')
             if rcs != riga['checksum']:
-                raise utili.Problema('err checksum diversi remoto={} != cyacd={}'.format(rcs, riga['checksum']))
+                raise utili.Problema(
+                    'err checksum diversi remoto={} != cyacd={}'.format(
+                        rcs, riga['checksum']))
 
         if not dispo.bl_validate():
             raise utili.Problema('err bootloadable non valido')

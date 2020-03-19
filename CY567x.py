@@ -38,7 +38,6 @@ IO_CAPABILITIES = {
 
 
 class _COMMAND:
-
     def __init__(self, cmd, prm=None):
         self._cod = cmd
         self._prm = prm
@@ -131,45 +130,64 @@ class CY567x(threading.Thread):
     def __init__(self, BAUD=BAUD_CY5677, poll=0.1, porta=None):
         self._can_print = True
 
-        self.proto = {
-            'rx': prt.PROTO_RX(),
-            'tx': prt.PROTO_TX()
-        }
+        self.proto = {'rx': prt.PROTO_RX(), 'tx': prt.PROTO_TX()}
 
         self.events = {
-            cc.EVT_COMMAND_STATUS: self._evt_command_status,
-            cc.EVT_COMMAND_COMPLETE: self._evt_command_complete,
-            cc.EVT_SCAN_PROGRESS_RESULT: self._evt_scan_progress_result,
-            cc.EVT_ESTABLISH_CONNECTION_RESPONSE: self._evt_gatt_connect_ind,
-            cc.EVT_ENHANCED_CONNECTION_COMPLETE: self._evt_gap_enhance_conn_complete,
-            cc.EVT_PAIRING_REQUEST_RECEIVED_NOTIFICATION: self._evt_gap_auth_req,
-            cc.EVT_DATA_LENGTH_CHANGED_NOTIFICATION: self._evt_gap_data_length_change,
-            cc.EVT_NEGOTIATED_PAIRING_PARAMETERS: self._evt_negotiated_pairing_parameters,
-            cc.EVT_PASSKEY_ENTRY_REQUEST: self._evt_gap_passkey_entry_request,
-            cc.EVT_EXCHANGE_GATT_MTU_SIZE_RESPONSE: self._evt_gattc_xchng_mtu_rsp,
-            cc.EVT_AUTHENTICATION_ERROR_NOTIFICATION: self._evt_gap_auth_failed,
-            cc.EVT_CONNECTION_TERMINATED_NOTIFICATION: self._evt_gap_device_disconnected,
-            cc.EVT_REPORT_STACK_MISC_STATUS: self._evt_report_stack_misc_status,
-            cc.EVT_CHARACTERISTIC_VALUE_NOTIFICATION: self._evt_gattc_handle_value_ntf,
-            cc.EVT_CHARACTERISTIC_VALUE_INDICATION: self._evt_gattc_handle_value_ind,
+            cc.EVT_COMMAND_STATUS:
+            self._evt_command_status,
+            cc.EVT_COMMAND_COMPLETE:
+            self._evt_command_complete,
+            cc.EVT_SCAN_PROGRESS_RESULT:
+            self._evt_scan_progress_result,
+            cc.EVT_ESTABLISH_CONNECTION_RESPONSE:
+            self._evt_gatt_connect_ind,
+            cc.EVT_ENHANCED_CONNECTION_COMPLETE:
+            self._evt_gap_enhance_conn_complete,
+            cc.EVT_PAIRING_REQUEST_RECEIVED_NOTIFICATION:
+            self._evt_gap_auth_req,
+            cc.EVT_DATA_LENGTH_CHANGED_NOTIFICATION:
+            self._evt_gap_data_length_change,
+            cc.EVT_NEGOTIATED_PAIRING_PARAMETERS:
+            self._evt_negotiated_pairing_parameters,
+            cc.EVT_PASSKEY_ENTRY_REQUEST:
+            self._evt_gap_passkey_entry_request,
+            cc.EVT_EXCHANGE_GATT_MTU_SIZE_RESPONSE:
+            self._evt_gattc_xchng_mtu_rsp,
+            cc.EVT_AUTHENTICATION_ERROR_NOTIFICATION:
+            self._evt_gap_auth_failed,
+            cc.EVT_CONNECTION_TERMINATED_NOTIFICATION:
+            self._evt_gap_device_disconnected,
+            cc.EVT_REPORT_STACK_MISC_STATUS:
+            self._evt_report_stack_misc_status,
+            cc.EVT_CHARACTERISTIC_VALUE_NOTIFICATION:
+            self._evt_gattc_handle_value_ntf,
+            cc.EVT_CHARACTERISTIC_VALUE_INDICATION:
+            self._evt_gattc_handle_value_ind,
             cc.EVT_GET_BLUETOOTH_DEVICE_ADDRESS_RESPONSE:
-                self._evt_get_bluetooth_device_address_response,
-            cc.EVT_SCAN_STOPPED_NOTIFICATION: self._evt_scan_stopped_notification,
-            cc.EVT_GATT_ERROR_NOTIFICATION: self._evt_gatt_error_notification,
-            cc.EVT_READ_CHARACTERISTIC_VALUE_RESPONSE: self._evt_gattc_read_rsp,
-            cc.EVT_READ_LONG_CHARACTERISTIC_VALUE_RESPONSE: self._evt_gattc_read_rsp,
-            cc.EVT_DISCOVER_PRIMARY_SERVICES_BY_UUID_RESULT_PROGRESS: self._evt_gattc_find_by_type_value_rsp,
-            cc.EVT_DISCOVER_ALL_PRIMARY_SERVICES_RESULT_PROGRESS: self._evt_gattc_read_by_group_type_rsp,
-            cc.EVT_DISCOVER_CHARACTERISTICS_BY_UUID_RESULT_PROGRESS: self._evt_gattc_read_by_type_rsp_chr_uid,
-            cc.EVT_DISCOVER_ALL_CHARACTERISTICS_RESULT_PROGRESS: self._evt_gattc_read_by_type_rsp_all_char,
-            cc.EVT_DISCOVER_ALL_CHARACTERISTIC_DESCRIPTORS_RESULT_PROGRESS: self._evt_gattc_find_info_rsp,
-            cc.EVT_READ_CHARACTERISTIC_DESCRIPTOR_RESPONSE: self._evt_gattc_read_rsp
+            self._evt_get_bluetooth_device_address_response,
+            cc.EVT_SCAN_STOPPED_NOTIFICATION:
+            self._evt_scan_stopped_notification,
+            cc.EVT_GATT_ERROR_NOTIFICATION:
+            self._evt_gatt_error_notification,
+            cc.EVT_READ_CHARACTERISTIC_VALUE_RESPONSE:
+            self._evt_gattc_read_rsp,
+            cc.EVT_READ_LONG_CHARACTERISTIC_VALUE_RESPONSE:
+            self._evt_gattc_read_rsp,
+            cc.EVT_DISCOVER_PRIMARY_SERVICES_BY_UUID_RESULT_PROGRESS:
+            self._evt_gattc_find_by_type_value_rsp,
+            cc.EVT_DISCOVER_ALL_PRIMARY_SERVICES_RESULT_PROGRESS:
+            self._evt_gattc_read_by_group_type_rsp,
+            cc.EVT_DISCOVER_CHARACTERISTICS_BY_UUID_RESULT_PROGRESS:
+            self._evt_gattc_read_by_type_rsp_chr_uid,
+            cc.EVT_DISCOVER_ALL_CHARACTERISTICS_RESULT_PROGRESS:
+            self._evt_gattc_read_by_type_rsp_all_char,
+            cc.EVT_DISCOVER_ALL_CHARACTERISTIC_DESCRIPTORS_RESULT_PROGRESS:
+            self._evt_gattc_find_info_rsp,
+            cc.EVT_READ_CHARACTERISTIC_DESCRIPTOR_RESPONSE:
+            self._evt_gattc_read_rsp
         }
 
-        self.connection = {
-            'mtu': 23,
-            'cyBle_connHandle': None
-        }
+        self.connection = {'mtu': 23, 'cyBle_connHandle': None}
 
         self.command = {
             'curr': None,
@@ -177,11 +195,7 @@ class CY567x(threading.Thread):
             'poll': poll,
         }
 
-        self.services = {
-            'primary': [],
-            'current': [],
-            'char': []
-        }
+        self.services = {'primary': [], 'current': [], 'char': []}
 
         try:
             serial_open = serial.Serial
@@ -189,14 +203,13 @@ class CY567x(threading.Thread):
                 porta = 'hwgrep://04B4:F139'
                 serial_open = serial.serial_for_url
 
-            self.uart = serial_open(
-                porta,
-                baudrate=BAUD,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE,
-                timeout=1,
-                rtscts=True)
+            self.uart = serial_open(porta,
+                                    baudrate=BAUD,
+                                    bytesize=serial.EIGHTBITS,
+                                    parity=serial.PARITY_NONE,
+                                    stopbits=serial.STOPBITS_ONE,
+                                    timeout=1,
+                                    rtscts=True)
 
             # posso girare
             threading.Thread.__init__(self, daemon=True)
@@ -214,8 +227,8 @@ class CY567x(threading.Thread):
         if self._can_print:
             adesso = datetime.datetime.now()
             sadesso = '{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{:03.0f}: '.format(
-                adesso.year, adesso.month, adesso.day, adesso.hour, adesso.minute,
-                adesso.second, adesso.microsecond / 1000.0)
+                adesso.year, adesso.month, adesso.day, adesso.hour,
+                adesso.minute, adesso.second, adesso.microsecond / 1000.0)
 
             print(sadesso + msg)
 
@@ -238,18 +251,16 @@ class CY567x(threading.Thread):
 
     def _evt_command_status(self, prm):
         cmd, status = struct.unpack('<2H', prm)
-        self._print(
-            'EVT_COMMAND_STATUS: cmd={:04X} stt={}'.format(
-                cmd, status))
+        self._print('EVT_COMMAND_STATUS: cmd={:04X} stt={}'.format(
+            cmd, status))
         if cmd in (self.Cmd_Start_Scan_Api,
                    self.Cmd_Initiate_Pairing_Request_Api):
             self._close_command(cmd, status)
 
     def _evt_command_complete(self, prm):
         cmd, status = struct.unpack('<2H', prm)
-        self._print(
-            'EVT_COMMAND_COMPLETE: cmd={:04X} stt={}'.format(
-                cmd, status))
+        self._print('EVT_COMMAND_COMPLETE: cmd={:04X} stt={}'.format(
+            cmd, status))
         if cmd == self.Cmd_Initiate_Pairing_Request_Api:
             # the command was closed by _evt_command_status: now we must tell
             # that the procedure was successfull
@@ -264,16 +275,16 @@ class CY567x(threading.Thread):
     def _evt_gatt_connect_ind(self, prm):
         cmd, conh = struct.unpack('<2H', prm)
         self._print(
-            'EVT_ESTABLISH_CONNECTION_RESPONSE: cmd={:04X} handle={:04X}'.format(
-                cmd, conh))
+            'EVT_ESTABLISH_CONNECTION_RESPONSE: cmd={:04X} handle={:04X}'.
+            format(cmd, conh))
         self.connection['cyBle_connHandle'] = conh
         self.connection['mtu'] = 23
 
     def _evt_gap_enhance_conn_complete(self, prm):
         cmd, status, conh, role = struct.unpack('<HBHB', prm[:6])
         self._print(
-            'EVT_ENHANCED_CONNECTION_COMPLETE: cmd={:04X} status={} handle={:04X} role='.format(
-                cmd, status, conh) + 'master' if role == 0 else 'slave')
+            'EVT_ENHANCED_CONNECTION_COMPLETE: cmd={:04X} status={} handle={:04X} role='
+            .format(cmd, status, conh) + 'master' if role == 0 else 'slave')
 
     def _evt_gap_auth_req(self, prm):
         """
@@ -307,13 +318,11 @@ class CY567x(threading.Thread):
         48 01   connMaxRxTime
         """
         _, txo, txt, rxo, rxt = struct.unpack('<5H', prm)
-        self._print(
-            'EVT_DATA_LENGTH_CHANGED_NOTIFICATION: ' +
-            'connMaxTxOctets={} '.format(txo) +
-            'connMaxTxTime={} '.format(txt) +
-            'connMaxRxOctets={} '.format(rxo) +
-            'connMaxRxTime={}'.format(rxt)
-        )
+        self._print('EVT_DATA_LENGTH_CHANGED_NOTIFICATION: ' +
+                    'connMaxTxOctets={} '.format(txo) +
+                    'connMaxTxTime={} '.format(txt) +
+                    'connMaxRxOctets={} '.format(rxo) +
+                    'connMaxRxTime={}'.format(rxt))
 
     def _evt_negotiated_pairing_parameters(self, prm):
         """
@@ -328,12 +337,10 @@ class CY567x(threading.Thread):
         00 	  authErr
         00	  pairingProperties
         """
-        _, reason, _, _, _, authErr, _ = struct.unpack(
-            '<H6B', prm)
+        _, reason, _, _, _, authErr, _ = struct.unpack('<H6B', prm)
         self._print(
             'EVT_NEGOTIATED_PAIRING_PARAMETERS: reason={} authErr={}'.format(
-                reason,
-                authErr))
+                reason, authErr))
 
     def _evt_gap_passkey_entry_request(self, _):
         """
@@ -383,9 +390,8 @@ class CY567x(threading.Thread):
         """
         event, dim = struct.unpack('<2H', prm[:4])
         prm = prm[4:]
-        self._print(
-            'EVT_REPORT_STACK_MISC_STATUS: CYBLE_EVT_={:04X}[{}] '.format(
-                event, dim) + utili.esa_da_ba(prm, ' '))
+        self._print('EVT_REPORT_STACK_MISC_STATUS: CYBLE_EVT_={:04X}[{}] '.
+                    format(event, dim) + utili.esa_da_ba(prm, ' '))
 
     def _evt_gattc_handle_value_ntf(self, prm):
         # connHandle, attrHandle, len
@@ -416,7 +422,8 @@ class CY567x(threading.Thread):
         0E    GattErrResp->errorCode
         """
         cmd, _, pdu, _, error = struct.unpack('<2HBHB', prm)
-        self._print('EVT_GATT_ERROR_NOTIFICATION ' + cc.quale_pdu(pdu) + ' ' + cc.quale_errore(error))
+        self._print('EVT_GATT_ERROR_NOTIFICATION ' + cc.quale_pdu(pdu) + ' ' +
+                    cc.quale_errore(error))
         if cmd in (self.Cmd_Discover_All_Primary_Services_Api,
                    self.Cmd_Discover_Primary_Services_By_Uuid_Api,
                    self.Cmd_Discover_All_Characteristics_Api):
@@ -444,26 +451,19 @@ class CY567x(threading.Thread):
         if endh == 0xFFFF:
             self._close_command(cmd, 0)
         elif cmd == self.Cmd_Discover_Primary_Services_By_Uuid_Api:
-            srv = {
-                'starth': sh,
-                'endh': endh
-            }
+            srv = {'starth': sh, 'endh': endh}
             self.services['current'].append(srv)
-
 
     def _evt_gattc_read_by_group_type_rsp(self, prm):
         """
         CYBLE_EVT_GATTC_READ_BY_GROUP_TYPE_RSP
         cmd connHandle [sh eh type uuid], ...
         """
-        cmd, _ = struct.unpack('<2H', prm[:4])
+        _, _ = struct.unpack('<2H', prm[:4])
         prm = prm[4:]
         while len(prm):
             sh, eh, stype = struct.unpack('<2HB', prm[:5])
-            srv = {
-                'starth': sh,
-                'endh': eh
-            }
+            srv = {'starth': sh, 'endh': eh}
             prm = prm[5:]
             if stype == 1:
                 uid16 = struct.unpack('<H', prm[:2])[0]
@@ -482,7 +482,7 @@ class CY567x(threading.Thread):
         CYBLE_EVT_GATTC_READ_BY_TYPE_RSP + CMD_DISCOVER_CHARACTERISTICS_BY_UUID
         cmd connHandle [attrh prop valh], ...
         """
-        cmd, _ = struct.unpack('<2H', prm[:4])
+        _, _ = struct.unpack('<2H', prm[:4])
         prm = prm[4:]
         while len(prm) >= 5:
             attr, prop, value = struct.unpack('<HBH', prm[:5])
@@ -499,7 +499,7 @@ class CY567x(threading.Thread):
         CYBLE_EVT_GATTC_READ_BY_TYPE_RSP + CMD_DISCOVER_ALL_CHARACTERISTICS
         cmd connHandle [attrh prop valh uidtype uid], ...
         """
-        cmd, _ = struct.unpack('<2H', prm[:4])
+        _, _ = struct.unpack('<2H', prm[:4])
         prm = prm[4:]
         while len(prm) >= 2 + 1 + 2 + 1 + 2:
             attr, prop, value, uidtype = struct.unpack('<HBHB', prm[:6])
@@ -522,7 +522,7 @@ class CY567x(threading.Thread):
         CYBLE_EVT_GATTC_FIND_INFO_RSP
         cmd connHandle [attrh uidtype uid], ...
         """
-        cmd, _ = struct.unpack('<2H', prm[:4])
+        _, _ = struct.unpack('<2H', prm[:4])
         prm = prm[4:]
         while len(prm) >= 2 + 1 + 2:
             attr, uidtype = struct.unpack('<HB', prm[:3])
@@ -608,9 +608,8 @@ class CY567x(threading.Thread):
                     try:
                         self.events[dec['evn']](dec['prm'])
                     except KeyError:
-                        self._print(
-                            'PLEASE MANAGE ' +
-                            self.proto['rx'].msg_to_string(msg))
+                        self._print('PLEASE MANAGE ' +
+                                    self.proto['rx'].msg_to_string(msg))
         self._print('muoio')
 
         # switch dongle to initial configuration
@@ -707,14 +706,9 @@ class CY567x(threading.Thread):
             # don't force secure connections (this should be done by the perip)
             CyBle_GapSetSecureConnectionsOnlyMode = 0
 
-            prm = struct.pack(
-                '<6B',
-                security,
-                bonding,
-                ekeySize,
-                authErr,
-                pairingProperties,
-                CyBle_GapSetSecureConnectionsOnlyMode)
+            prm = struct.pack('<6B', security, bonding, ekeySize, authErr,
+                              pairingProperties,
+                              CyBle_GapSetSecureConnectionsOnlyMode)
 
             return self._send_command_and_wait(
                 self.Cmd_Set_Local_Device_Security_Api, prm=prm)
@@ -780,7 +774,8 @@ class CY567x(threading.Thread):
             prm = struct.pack('<HB', self.connection['cyBle_connHandle'], 2)
             prm += ba_from_stringuuid(suid)
             if self._send_command_and_wait(
-                self.Cmd_Discover_Primary_Services_By_Uuid_Api, prm=prm, to=5):
+                    self.Cmd_Discover_Primary_Services_By_Uuid_Api, prm=prm,
+                    to=5):
                 if any(self.services['current']):
                     return self.services['current'][0]
 
@@ -799,7 +794,8 @@ class CY567x(threading.Thread):
 
             prm = struct.pack('<H', self.connection['cyBle_connHandle'])
             if self._send_command_and_wait(
-                self.Cmd_Discover_All_Primary_Services_Api, prm=prm, to=10):
+                    self.Cmd_Discover_All_Primary_Services_Api, prm=prm,
+                    to=10):
                 if any(self.services['primary']):
                     return self.services['primary']
 
@@ -821,7 +817,8 @@ class CY567x(threading.Thread):
             prm += ba_from_stringuuid(sehu['uuid128'])
             prm += struct.pack('<2H', sehu['starth'], sehu['endh'])
             if self._send_command_and_wait(
-                self.Cmd_Discover_Characteristics_By_Uuid_Api, prm=prm, to=10):
+                    self.Cmd_Discover_Characteristics_By_Uuid_Api, prm=prm,
+                    to=10):
                 if any(self.services['char']):
                     return self.services['char']
 
@@ -842,7 +839,7 @@ class CY567x(threading.Thread):
             prm = struct.pack('<H', self.connection['cyBle_connHandle'])
             prm += struct.pack('<2H', sehu['starth'], sehu['endh'])
             if self._send_command_and_wait(
-                self.Cmd_Discover_All_Characteristics_Api, prm=prm, to=10):
+                    self.Cmd_Discover_All_Characteristics_Api, prm=prm, to=10):
                 if any(self.services['char']):
                     return self.services['char']
 
@@ -859,9 +856,12 @@ class CY567x(threading.Thread):
 
             self.services['char'] = []
 
-            prm = struct.pack('<3H', self.connection['cyBle_connHandle'], charh, charh)
+            prm = struct.pack('<3H', self.connection['cyBle_connHandle'],
+                              charh, charh)
             if self._send_command_and_wait(
-                self.Cmd_Discover_All_Characteristic_Descriptors_Api, prm=prm, to=10):
+                    self.Cmd_Discover_All_Characteristic_Descriptors_Api,
+                    prm=prm,
+                    to=10):
                 if any(self.services['char']):
                     return self.services['char']
 
@@ -878,10 +878,9 @@ class CY567x(threading.Thread):
 
         if self.connection['cyBle_connHandle'] is not None:
             self._print('exchange_gatt_mtu_size')
-            prm = struct.pack(
-                '<2H', self.connection['cyBle_connHandle'], mtu)
-            if self._send_command_and_wait(
-                    self.Cmd_Exchange_GATT_MTU_Size_Api, prm=prm):
+            prm = struct.pack('<2H', self.connection['cyBle_connHandle'], mtu)
+            if self._send_command_and_wait(self.Cmd_Exchange_GATT_MTU_Size_Api,
+                                           prm=prm):
                 return self.connection['mtu']
 
         return 0
@@ -897,11 +896,8 @@ class CY567x(threading.Thread):
         if len(dati) > mtu - 3:
             dati = dati[:mtu - 3]
 
-        prm = struct.pack(
-            '<3H',
-            self.connection['cyBle_connHandle'],
-            crt,
-            len(dati))
+        prm = struct.pack('<3H', self.connection['cyBle_connHandle'], crt,
+                          len(dati))
         prm += dati
         return self._send_command_and_wait(cmd, prm=prm, to=to)
 
@@ -917,7 +913,8 @@ class CY567x(threading.Thread):
             self._print('write_without_response')
 
             return self._write(
-                crt, dati, self.Cmd_Characteristic_Value_Write_Without_Response_Api)
+                crt, dati,
+                self.Cmd_Characteristic_Value_Write_Without_Response_Api)
 
         return False
 
@@ -932,8 +929,8 @@ class CY567x(threading.Thread):
         if self.connection['cyBle_connHandle'] is not None:
             self._print('write_characteristic_value')
 
-            return self._write(
-                crt, dati, self.Cmd_Write_Characteristic_Value_Api, to)
+            return self._write(crt, dati,
+                               self.Cmd_Write_Characteristic_Value_Api, to)
 
         return False
 
@@ -954,8 +951,9 @@ class CY567x(threading.Thread):
             if ndc:
                 dati += 2
 
-            return self._write(
-                crt, bytearray([dati]), self.Cmd_Write_Characteristic_Descriptor_Api, to)
+            return self._write(crt, bytearray([dati]),
+                               self.Cmd_Write_Characteristic_Descriptor_Api,
+                               to)
 
         return False
 
@@ -971,12 +969,8 @@ class CY567x(threading.Thread):
         if self.connection['cyBle_connHandle'] is not None:
             self._print('write_long_characteristic_value')
 
-            prm = struct.pack(
-                '<4H',
-                self.connection['cyBle_connHandle'],
-                crt,
-                ofs,
-                len(dati))
+            prm = struct.pack('<4H', self.connection['cyBle_connHandle'], crt,
+                              ofs, len(dati))
             prm += dati
             return self._send_command_and_wait(
                 self.Cmd_Write_Long_Characteristic_Value_Api, prm=prm)
@@ -1017,8 +1011,8 @@ class CY567x(threading.Thread):
         if self.connection['cyBle_connHandle'] is not None:
             self._print('read_long_characteristic_value')
 
-            prm = struct.pack(
-                '<3H', self.connection['cyBle_connHandle'], crt, ofs)
+            prm = struct.pack('<3H', self.connection['cyBle_connHandle'], crt,
+                              ofs)
 
             res = self._send_command_and_wait(
                 self.Cmd_Read_Long_Characteristic_Values_Api, prm=prm)
@@ -1073,10 +1067,10 @@ class CY567x(threading.Thread):
         """
         if self.connection['cyBle_connHandle'] is not None:
             self._print('pairing_passkey')
-            prm = struct.pack('<HIB', self.connection['cyBle_connHandle'],
-                              pk, 1)
-            return self._send_command_and_wait(
-                self.Cmd_Pairing_PassKey_Api, prm=prm)
+            prm = struct.pack('<HIB', self.connection['cyBle_connHandle'], pk,
+                              1)
+            return self._send_command_and_wait(self.Cmd_Pairing_PassKey_Api,
+                                               prm=prm)
 
         return False
 
@@ -1129,9 +1123,8 @@ class CY567x(threading.Thread):
         :param ntf: notification (bytearray)
         :return: n.a.
         """
-        self._print(
-            'gattc_handle_value_ntf_cb: handle:{:04X} '.format(crt) +
-            utili.esa_da_ba(ntf, ' '))
+        self._print('gattc_handle_value_ntf_cb: handle:{:04X} '.format(crt) +
+                    utili.esa_da_ba(ntf, ' '))
 
     def gattc_handle_value_ind_cb(self, crt, result, ind):
         """
@@ -1141,10 +1134,8 @@ class CY567x(threading.Thread):
         :param ind: bytearray
         :return: n.a.
         """
-        self._print(
-            'gattc_handle_value_ind_cb: handle:{:04X} confirm={}'.format(
-                crt, result) +
-            utili.esa_da_ba(ind, ' '))
+        self._print('gattc_handle_value_ind_cb: handle:{:04X} confirm={}'.
+                    format(crt, result) + utili.esa_da_ba(ind, ' '))
 
 
 if __name__ == '__main__':
