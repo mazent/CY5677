@@ -11,7 +11,7 @@ import serial
 import cycost as cc
 import cyproto as prt
 import utili
-from scan_util import scan_report, scan_advertise
+from scan_util import scan_report, scan_advertise, ba_from_stringuuid, stringuuid_from_ba
 
 BAUD_CY5670 = 115200
 BAUD_CY5677 = 921600
@@ -102,6 +102,7 @@ class CY567x(threading.Thread):
     QUIT = 0xE5C1
     ABORT_CURRENT_COMMAND = 0xACC0
     # dongle commands (cfr CySmt_CommandLayer.c)
+    GATT_GROUP = 4 << 7
     Cmd_Init_Ble_Stack_Api = 0xFC07
     Cmd_Get_Bluetooth_Device_Address_Api = 0xFE82
     Cmd_Start_Scan_Api = 0xFE93
@@ -113,12 +114,19 @@ class CY567x(threading.Thread):
     Cmd_Initiate_Pairing_Request_Api = 0xFE99
     Cmd_Pairing_PassKey_Api = 0xFE9B
     Cmd_Terminate_Connection_Api = 0xFE98
-    Cmd_Characteristic_Value_Write_Without_Response_Api = (4 << 7) + 10
-    Cmd_Write_Characteristic_Value_Api = (4 << 7) + 11
-    Cmd_Write_Long_Characteristic_Value_Api = (4 << 7) + 12
+    Cmd_Characteristic_Value_Write_Without_Response_Api = GATT_GROUP + 10
+    Cmd_Write_Characteristic_Value_Api = GATT_GROUP + 11
+    Cmd_Write_Long_Characteristic_Value_Api = GATT_GROUP + 12
+    Cmd_Write_Characteristic_Descriptor_Api = GATT_GROUP + 16
     Cmd_Read_Characteristic_Value_Api = 0xFE06
     Cmd_Read_Long_Characteristic_Values_Api = 0xFE08
+    Cmd_Read_Characteristic_Descriptor_Api = 0xFE0E
     Cmd_Tool_Disconnected_Api = 0xFC08
+    Cmd_Discover_Primary_Services_By_Uuid_Api = 0xFE01
+    Cmd_Discover_All_Primary_Services_Api = 0xFE00
+    Cmd_Discover_Characteristics_By_Uuid_Api = 0xFE04
+    Cmd_Discover_All_Characteristics_Api = 0xFE03
+    Cmd_Discover_All_Characteristic_Descriptors_Api = 0xFE05
 
     def __init__(self, BAUD=BAUD_CY5677, poll=0.1, porta=None):
         self._can_print = True
@@ -149,7 +157,13 @@ class CY567x(threading.Thread):
             cc.EVT_SCAN_STOPPED_NOTIFICATION: self._evt_scan_stopped_notification,
             cc.EVT_GATT_ERROR_NOTIFICATION: self._evt_gatt_error_notification,
             cc.EVT_READ_CHARACTERISTIC_VALUE_RESPONSE: self._evt_gattc_read_rsp,
-            cc.EVT_READ_LONG_CHARACTERISTIC_VALUE_RESPONSE: self._evt_gattc_read_rsp
+            cc.EVT_READ_LONG_CHARACTERISTIC_VALUE_RESPONSE: self._evt_gattc_read_rsp,
+            cc.EVT_DISCOVER_PRIMARY_SERVICES_BY_UUID_RESULT_PROGRESS: self._evt_gattc_find_by_type_value_rsp,
+            cc.EVT_DISCOVER_ALL_PRIMARY_SERVICES_RESULT_PROGRESS: self._evt_gattc_read_by_group_type_rsp,
+            cc.EVT_DISCOVER_CHARACTERISTICS_BY_UUID_RESULT_PROGRESS: self._evt_gattc_read_by_type_rsp_chr_uid,
+            cc.EVT_DISCOVER_ALL_CHARACTERISTICS_RESULT_PROGRESS: self._evt_gattc_read_by_type_rsp_all_char,
+            cc.EVT_DISCOVER_ALL_CHARACTERISTIC_DESCRIPTORS_RESULT_PROGRESS: self._evt_gattc_find_info_rsp,
+            cc.EVT_READ_CHARACTERISTIC_DESCRIPTOR_RESPONSE: self._evt_gattc_read_rsp
         }
 
         self.connection = {
@@ -161,6 +175,12 @@ class CY567x(threading.Thread):
             'curr': None,
             'todo': queue.Queue(),
             'poll': poll,
+        }
+
+        self.services = {
+            'primary': [],
+            'current': [],
+            'char': []
         }
 
         try:
@@ -395,9 +415,15 @@ class CY567x(threading.Thread):
         15 00 GattErrResp->attrHandle
         0E    GattErrResp->errorCode
         """
-        cmd, _, _, _, error = struct.unpack('<2HBHB', prm)
-        self._print('EVT_GATT_ERROR_NOTIFICATION err={:02X}'.format(error))
-        self._close_command(cmd, error)
+        cmd, _, pdu, _, error = struct.unpack('<2HBHB', prm)
+        self._print('EVT_GATT_ERROR_NOTIFICATION ' + cc.quale_pdu(pdu) + ' ' + cc.quale_errore(error))
+        if cmd in (self.Cmd_Discover_All_Primary_Services_Api,
+                   self.Cmd_Discover_Primary_Services_By_Uuid_Api,
+                   self.Cmd_Discover_All_Characteristics_Api):
+            # always return CYBLE_GATT_ERR_ATTRIBUTE_NOT_FOUND
+            self._close_command(cmd, 0)
+        else:
+            self._close_command(cmd, error)
 
     def _evt_gattc_read_rsp(self, prm):
         """
@@ -406,6 +432,111 @@ class CY567x(threading.Thread):
         """
         cmd, _, _ = struct.unpack('<3H', prm[:6])
         self._save_data(cmd, prm[6:])
+
+    def _evt_gattc_find_by_type_value_rsp(self, prm):
+        """
+        CYBLE_EVT_GATTC_FIND_BY_TYPE_VALUE_RSP
+        cmd, connHandle, startHandle, endHandle
+        """
+        cmd, _, sh, endh = struct.unpack('<4H', prm)
+        # The sequence of operations is complete when ...
+        # or when the End Group Handle in the Find By Type Value Response is 0xFFFF
+        if endh == 0xFFFF:
+            self._close_command(cmd, 0)
+        elif cmd == self.Cmd_Discover_Primary_Services_By_Uuid_Api:
+            srv = {
+                'starth': sh,
+                'endh': endh
+            }
+            self.services['current'].append(srv)
+
+
+    def _evt_gattc_read_by_group_type_rsp(self, prm):
+        """
+        CYBLE_EVT_GATTC_READ_BY_GROUP_TYPE_RSP
+        cmd connHandle [sh eh type uuid], ...
+        """
+        cmd, _ = struct.unpack('<2H', prm[:4])
+        prm = prm[4:]
+        while len(prm):
+            sh, eh, stype = struct.unpack('<2HB', prm[:5])
+            srv = {
+                'starth': sh,
+                'endh': eh
+            }
+            prm = prm[5:]
+            if stype == 1:
+                uid16 = struct.unpack('<H', prm[:2])[0]
+                srv['uuid16'] = uid16
+                prm = prm[2:]
+                #print('start={:04X} end={:04X} uuid={:04X}'.format(sh, eh, uid16))
+            else:
+                uid128 = prm[:16]
+                srv['uuid128'] = stringuuid_from_ba(uid128)
+                prm = prm[16:]
+                #print('start={:04X} end={:04X} uuid='.format(sh, eh) + srv['uuid128'])
+            self.services['primary'].append(srv)
+
+    def _evt_gattc_read_by_type_rsp_chr_uid(self, prm):
+        """
+        CYBLE_EVT_GATTC_READ_BY_TYPE_RSP + CMD_DISCOVER_CHARACTERISTICS_BY_UUID
+        cmd connHandle [attrh prop valh], ...
+        """
+        cmd, _ = struct.unpack('<2H', prm[:4])
+        prm = prm[4:]
+        while len(prm) >= 5:
+            attr, prop, value = struct.unpack('<HBH', prm[:5])
+            chrt = {
+                'attr': attr,
+                'prop': cc.char_properties(prop),
+                'value': value
+            }
+            self.services['char'].append(chrt)
+            prm = prm[5:]
+
+    def _evt_gattc_read_by_type_rsp_all_char(self, prm):
+        """
+        CYBLE_EVT_GATTC_READ_BY_TYPE_RSP + CMD_DISCOVER_ALL_CHARACTERISTICS
+        cmd connHandle [attrh prop valh uidtype uid], ...
+        """
+        cmd, _ = struct.unpack('<2H', prm[:4])
+        prm = prm[4:]
+        while len(prm) >= 2 + 1 + 2 + 1 + 2:
+            attr, prop, value, uidtype = struct.unpack('<HBHB', prm[:6])
+            prm = prm[6:]
+            chrt = {
+                'attr': attr,
+                'prop': cc.char_properties(prop),
+                'value': value
+            }
+            if uidtype == 1:
+                chrt['uuid16'] = struct.unpack('<H', prm[:2])[0]
+                prm = prm[2:]
+            else:
+                chrt['uuid128'] = stringuuid_from_ba(prm[:16])
+                prm = prm[16:]
+            self.services['char'].append(chrt)
+
+    def _evt_gattc_find_info_rsp(self, prm):
+        """
+        CYBLE_EVT_GATTC_FIND_INFO_RSP
+        cmd connHandle [attrh uidtype uid], ...
+        """
+        cmd, _ = struct.unpack('<2H', prm[:4])
+        prm = prm[4:]
+        while len(prm) >= 2 + 1 + 2:
+            attr, uidtype = struct.unpack('<HB', prm[:3])
+            prm = prm[3:]
+            chrt = {
+                'attr': attr,
+            }
+            if uidtype == 1:
+                chrt['uuid16'] = struct.unpack('<H', prm[:2])[0]
+                prm = prm[2:]
+            else:
+                chrt['uuid128'] = stringuuid_from_ba(prm[:16])
+                prm = prm[16:]
+            self.services['char'].append(chrt)
 
     def _send_command_and_wait(self, cod, prm=None, to=5):
         # send
@@ -635,6 +766,107 @@ class CY567x(threading.Thread):
         # no connections: so I have executed the disconnection!
         return True
 
+    def find_primary_service(self, suid):
+        """
+        check if the service uuid is present
+        :param suid: string
+        :return: dict or None
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('find_primary_service')
+
+            self.services['current'] = []
+
+            prm = struct.pack('<HB', self.connection['cyBle_connHandle'], 2)
+            prm += ba_from_stringuuid(suid)
+            if self._send_command_and_wait(
+                self.Cmd_Discover_Primary_Services_By_Uuid_Api, prm=prm, to=5):
+                if any(self.services['current']):
+                    return self.services['current'][0]
+
+        # no connection, no service
+        return None
+
+    def find_primary_services(self):
+        """
+        find all the services
+        :return: list of dict or None
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('find_primary_services')
+
+            self.services['primary'] = []
+
+            prm = struct.pack('<H', self.connection['cyBle_connHandle'])
+            if self._send_command_and_wait(
+                self.Cmd_Discover_All_Primary_Services_Api, prm=prm, to=10):
+                if any(self.services['primary']):
+                    return self.services['primary']
+
+        # no connection, no service
+        return None
+
+    def discover_characteristics_by_uuid(self, sehu):
+        """
+        find all the characteristics
+        :param sehu: dict (e.g. from find_primary_services)
+        :return: list of dict or None
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('discover_characteristics_by_uuid')
+
+            self.services['char'] = []
+
+            prm = struct.pack('<HB', self.connection['cyBle_connHandle'], 2)
+            prm += ba_from_stringuuid(sehu['uuid128'])
+            prm += struct.pack('<2H', sehu['starth'], sehu['endh'])
+            if self._send_command_and_wait(
+                self.Cmd_Discover_Characteristics_By_Uuid_Api, prm=prm, to=10):
+                if any(self.services['char']):
+                    return self.services['char']
+
+        # no connection, no characteristics
+        return None
+
+    def discover_all_characteristics(self, sehu):
+        """
+        find all characteristic declarations within a service definition
+        :param sehu: dict (e.g. from find_primary_services)
+        :return: list of dict or None
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('discover_all_characteristics')
+
+            self.services['char'] = []
+
+            prm = struct.pack('<H', self.connection['cyBle_connHandle'])
+            prm += struct.pack('<2H', sehu['starth'], sehu['endh'])
+            if self._send_command_and_wait(
+                self.Cmd_Discover_All_Characteristics_Api, prm=prm, to=10):
+                if any(self.services['char']):
+                    return self.services['char']
+
+        return None
+
+    def discover_characteristic_descriptors(self, charh):
+        """
+        find all the characteristic descriptors
+        :param charh: handle of the characteristic
+        :return:
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('discover_all_characteristic_descriptors')
+
+            self.services['char'] = []
+
+            prm = struct.pack('<3H', self.connection['cyBle_connHandle'], charh, charh)
+            if self._send_command_and_wait(
+                self.Cmd_Discover_All_Characteristic_Descriptors_Api, prm=prm, to=10):
+                if any(self.services['char']):
+                    return self.services['char']
+
+        return None
+
     def exchange_gatt_mtu_size(self, mtu):
         """
         try to change mtu size
@@ -705,6 +937,28 @@ class CY567x(threading.Thread):
 
         return False
 
+    def write_characteristic_descriptor(self, crt, ntf=False, ndc=False, to=5):
+        """
+        enable/disable notifications and/or indications
+        :param crt: handle
+        :param ntf: True to enable notifications
+        :param ndc: True to enable indications
+        :param to: timeout
+        :return: bool
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('write_characteristic_descriptor')
+            dati = 0
+            if ntf:
+                dati += 1
+            if ndc:
+                dati += 2
+
+            return self._write(
+                crt, bytearray([dati]), self.Cmd_Write_Characteristic_Descriptor_Api, to)
+
+        return False
+
     def write_long_characteristic_value(self, crt, dati, ofs=0):
         """
         bt 4.2 - vol 3 - part G - 4.9.4
@@ -770,6 +1024,31 @@ class CY567x(threading.Thread):
                 self.Cmd_Read_Long_Characteristic_Values_Api, prm=prm)
             if not isinstance(res, bool):
                 return res
+
+        return None
+
+    def read_characteristic_descriptor(self, crt):
+        """
+        read notifications and indications state
+        :param crt: handle
+        :return: tuple (notif, indic) or None
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            self._print('read_characteristic_descriptor')
+
+            prm = struct.pack('<2H', self.connection['cyBle_connHandle'], crt)
+
+            res = self._send_command_and_wait(
+                self.Cmd_Read_Characteristic_Descriptor_Api, prm=prm)
+            if not isinstance(res, bool):
+                val = struct.unpack('<H', res)[0]
+                ntf = False
+                ndc = False
+                if val & 1:
+                    ntf = True
+                if val & 2:
+                    ndc = True
+                return ntf, ndc
 
         return None
 

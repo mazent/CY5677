@@ -113,6 +113,26 @@ def scan_advertise(data):
     return adv
 
 
+def ba_from_stringuuid(uid):
+    """
+    convert a string (e.g. 4A7A3045-BCD8-4ACA-B5AE-95FB82EEB222)
+    to a bytearray (e.g. 0x22, 0xB2, 0xEE, 0x82, 0xFB, 0x95, 0xAE, 0xB5, 0xCA, 0x4A, 0xD8, 0xBC, 0x45, 0x30, 0x7A, 0x4A)
+    :param uid: string
+    :return: bytearray
+    """
+    iuid = uuid.UUID('{' + uid + '}')
+
+    _uid = bytearray(iuid.bytes)
+    _uid.reverse()
+    return _uid
+
+
+def stringuuid_from_ba(data):
+    data.reverse()
+    srv = uuid.UUID(bytes=bytes(data))
+    return str(srv).upper()
+
+
 _ADV_TYPE = {
     0x01: _at_flags,
     0xFF: _at_manufacturer,
@@ -157,6 +177,8 @@ _ADDRESS_TYPE = {
 }
 
 if __name__ == '__main__':
+    print(stringuuid_from_ba(utili.ba_da_esa('00 05 00 00 00 00 10 00 80 00 00 80 5F 9B 01 31', ' ')))
+
     # riceve l'uid in formato testo (da profiles->custom service,
     # p.e. 4A7A3045-BCD8-4ACA-B5AE-95FB82EEB222)
     # e lo stampa come vettore di byte (0x22, 0xB2, 0xEE, 0x82, 0xFB, 0x95,
