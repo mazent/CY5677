@@ -760,10 +760,11 @@ class CY567x(threading.Thread):
         # no connections: so I have executed the disconnection!
         return True
 
-    def find_primary_service(self, suid):
+    def find_primary_service(self, suid, to=10):
         """
         check if the service uuid is present
         :param suid: string
+        :param to: timeout
         :return: dict or None
         """
         if self.connection['cyBle_connHandle'] is not None:
@@ -775,16 +776,17 @@ class CY567x(threading.Thread):
             prm += ba_from_stringuuid(suid)
             if self._send_command_and_wait(
                     self.Cmd_Discover_Primary_Services_By_Uuid_Api, prm=prm,
-                    to=5):
+                    to=to):
                 if any(self.services['current']):
                     return self.services['current'][0]
 
         # no connection, no service
         return None
 
-    def find_primary_services(self):
+    def find_primary_services(self, to=10):
         """
         find all the services
+        :param to: timeout
         :return: list of dict or None
         """
         if self.connection['cyBle_connHandle'] is not None:
@@ -795,17 +797,18 @@ class CY567x(threading.Thread):
             prm = struct.pack('<H', self.connection['cyBle_connHandle'])
             if self._send_command_and_wait(
                     self.Cmd_Discover_All_Primary_Services_Api, prm=prm,
-                    to=10):
+                    to=to):
                 if any(self.services['primary']):
                     return self.services['primary']
 
         # no connection, no service
         return None
 
-    def discover_characteristics_by_uuid(self, sehu):
+    def discover_characteristics_by_uuid(self, sehu, to=10):
         """
         find all the characteristics
         :param sehu: dict (e.g. from find_primary_services)
+        :param to: timeout
         :return: list of dict or None
         """
         if self.connection['cyBle_connHandle'] is not None:
@@ -818,17 +821,18 @@ class CY567x(threading.Thread):
             prm += struct.pack('<2H', sehu['starth'], sehu['endh'])
             if self._send_command_and_wait(
                     self.Cmd_Discover_Characteristics_By_Uuid_Api, prm=prm,
-                    to=10):
+                    to=to):
                 if any(self.services['char']):
                     return self.services['char']
 
         # no connection, no characteristics
         return None
 
-    def discover_all_characteristics(self, sehu):
+    def discover_all_characteristics(self, sehu, to=10):
         """
         find all characteristic declarations within a service definition
         :param sehu: dict (e.g. from find_primary_services)
+        :param to: timeout
         :return: list of dict or None
         """
         if self.connection['cyBle_connHandle'] is not None:
@@ -839,17 +843,18 @@ class CY567x(threading.Thread):
             prm = struct.pack('<H', self.connection['cyBle_connHandle'])
             prm += struct.pack('<2H', sehu['starth'], sehu['endh'])
             if self._send_command_and_wait(
-                    self.Cmd_Discover_All_Characteristics_Api, prm=prm, to=10):
+                    self.Cmd_Discover_All_Characteristics_Api, prm=prm, to=to):
                 if any(self.services['char']):
                     return self.services['char']
 
         return None
 
-    def discover_characteristic_descriptors(self, charh):
+    def discover_characteristic_descriptors(self, charh, to=10):
         """
         find all the characteristic descriptors
         :param charh: handle of the characteristic
-        :return:
+        :param to: timeout
+        :return: list of dict
         """
         if self.connection['cyBle_connHandle'] is not None:
             self._print('discover_all_characteristic_descriptors')
@@ -861,7 +866,7 @@ class CY567x(threading.Thread):
             if self._send_command_and_wait(
                     self.Cmd_Discover_All_Characteristic_Descriptors_Api,
                     prm=prm,
-                    to=10):
+                    to=to):
                 if any(self.services['char']):
                     return self.services['char']
 
@@ -957,13 +962,14 @@ class CY567x(threading.Thread):
 
         return False
 
-    def write_long_characteristic_value(self, crt, dati, ofs=0):
+    def write_long_characteristic_value(self, crt, dati, ofs=0, to=10):
         """
         bt 4.2 - vol 3 - part G - 4.9.4
 
         :param crt: handle
         :param dati: bytearray
         :param ofs: starting position
+        :param: to: timeout
         :return: bool
         """
         if self.connection['cyBle_connHandle'] is not None:
@@ -973,17 +979,18 @@ class CY567x(threading.Thread):
                               ofs, len(dati))
             prm += dati
             return self._send_command_and_wait(
-                self.Cmd_Write_Long_Characteristic_Value_Api, prm=prm)
+                self.Cmd_Write_Long_Characteristic_Value_Api, prm=prm, to=to)
 
         return False
 
-    def read_characteristic_value(self, crt):
+    def read_characteristic_value(self, crt, to=10):
         """
         bt 4.2 - vol 3 - part G - 4.8.1
 
         max mtu - 1 byte
 
         :param crt: handle
+        :param to: timeout
         :return: bytearray or None
 
         CYBLE_EVT_GATTC_READ_RSP
@@ -995,17 +1002,19 @@ class CY567x(threading.Thread):
             prm = struct.pack('<2H', self.connection['cyBle_connHandle'], crt)
 
             res = self._send_command_and_wait(
-                self.Cmd_Read_Characteristic_Value_Api, prm=prm)
+                self.Cmd_Read_Characteristic_Value_Api, prm=prm, to=to)
             if not isinstance(res, bool):
                 return res
 
         return None
 
-    def read_long_characteristic_value(self, crt, ofs=0):
+    def read_long_characteristic_value(self, crt, ofs=0, to=10):
         """
         bt 4.2 - vol 3 - part G - 4.8.3
 
         :param crt: handle
+        :param ofs: starting position
+        :param to: timeout
         :return: bytearray or None
         """
         if self.connection['cyBle_connHandle'] is not None:
@@ -1015,16 +1024,17 @@ class CY567x(threading.Thread):
                               ofs)
 
             res = self._send_command_and_wait(
-                self.Cmd_Read_Long_Characteristic_Values_Api, prm=prm)
+                self.Cmd_Read_Long_Characteristic_Values_Api, prm=prm, to=to)
             if not isinstance(res, bool):
                 return res
 
         return None
 
-    def read_characteristic_descriptor(self, crt):
+    def read_characteristic_descriptor(self, crt, to=5):
         """
         read notifications and indications state
         :param crt: handle
+        :param to: timeout
         :return: tuple (notif, indic) or None
         """
         if self.connection['cyBle_connHandle'] is not None:
@@ -1033,7 +1043,7 @@ class CY567x(threading.Thread):
             prm = struct.pack('<2H', self.connection['cyBle_connHandle'], crt)
 
             res = self._send_command_and_wait(
-                self.Cmd_Read_Characteristic_Descriptor_Api, prm=prm)
+                self.Cmd_Read_Characteristic_Descriptor_Api, prm=prm, to=to)
             if not isinstance(res, bool):
                 val = struct.unpack('<H', res)[0]
                 ntf = False

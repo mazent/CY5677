@@ -70,20 +70,33 @@ def _at_tx_power(data):
     return 'txp', txp[0]
 
 
-def _at_service_class_uuid128(data):
-    data.reverse()
-    srv = uuid.UUID(bytes=bytes(data))
-    return 'srv128', str(srv).upper()
-
-
 def _at_service_class_uuid16(data):
-    srv = struct.unpack('<H', data)[0]
-    return 'srv16', '{:04X}'.format(srv)
+    lista = []
+    while len(data) >= 2:
+        srv = struct.unpack('<H', data[:2])[0]
+        lista.append('{:04X}'.format(srv))
+        data = data[2:]
+    return 'srv16', lista
 
 
 def _at_service_class_uuid32(data):
-    srv = struct.unpack('<I', data)[0]
-    return 'srv32', '{:08X}'.format(srv)
+    lista = []
+    while len(data) >= 4:
+        srv = struct.unpack('<I', data[:4])[0]
+        lista.append('{:08X}'.format(srv))
+        data = data[4:]
+    return 'srv32', lista
+
+def _at_service_class_uuid128(data):
+    lista = []
+    while len(data) >= 16:
+        buid = data[:16]
+        data = data[16:]
+
+        buid.reverse()
+        srv = uuid.UUID(bytes=bytes(buid))
+        lista.append(str(srv).upper())
+    return 'srv128', lista
 
 
 def scan_advertise(data):
@@ -177,8 +190,6 @@ _ADDRESS_TYPE = {
 }
 
 if __name__ == '__main__':
-    print(stringuuid_from_ba(utili.ba_da_esa('00 05 00 00 00 00 10 00 80 00 00 80 5F 9B 01 31', ' ')))
-
     # riceve l'uid in formato testo (da profiles->custom service,
     # p.e. 4A7A3045-BCD8-4ACA-B5AE-95FB82EEB222)
     # e lo stampa come vettore di byte (0x22, 0xB2, 0xEE, 0x82, 0xFB, 0x95,
