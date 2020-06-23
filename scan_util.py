@@ -43,13 +43,13 @@ def _at_manufacturer(data):
 def _at_service_data16(data):
     sid = struct.unpack('<H', data[:2])
     data = data[2:]
-    return 'srvd16', sid, data
+    return 'srvd16', sid[0], data
 
 
 def _at_service_data32(data):
     sid = struct.unpack('<I', data[:4])
     data = data[4:]
-    return 'srvd32', sid, data
+    return 'srvd32', sid[0], data
 
 
 def _at_service_data128(data):

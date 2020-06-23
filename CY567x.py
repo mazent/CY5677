@@ -37,6 +37,89 @@ IO_CAPABILITIES = {
 }
 
 
+def valore(cosa, diz):
+    for k, v in diz.items():
+        if v == cosa:
+            return k
+    return 0
+
+
+ADDRESS_TYPE = {
+    0: 'PUBLIC',
+    1: 'RANDOM',
+    2: 'PUBLIC RPA',
+    3: 'RANDOM RPA'
+}
+
+
+def desc_at(at):
+    try:
+        return ADDRESS_TYPE[at]
+    except KeyError:
+        return 'ADDRESS TYPE ? {} ?'.format(at)
+
+
+FILTER_POLICY = {
+    0: 'CYBLE_GAPC_ADV_ACCEPT_ALL_PKT',
+    1: 'CYBLE_GAPC_ADV_ACCEPT_WHITELIST_PKT',
+    2: 'CYBLE_GAPC_ADV_ACCEPT_DIRECTED_RPA_PKT',
+    3: 'CYBLE_GAPC_ADV_ACCEPT_WHITELIST_DIRECTED_RPA_PKT'
+}
+
+
+def desc_fp(fp):
+    try:
+        return FILTER_POLICY[fp]
+    except KeyError:
+        return 'FILTER POLICY ? {} ?'.format(fp)
+
+
+DISCOVERY_PROC = {
+    0: 'Observation',
+    1: 'Limited discovery',
+    2: 'General discovery'
+}
+
+def desc_dp(dp):
+    try:
+        return DISCOVERY_PROC[dp]
+    except KeyError:
+        return 'DISCOVERY PROC ? {} ?'.format(dp)
+
+# CYBLE_BLESS_PWR_LVL_T will be the index + 1
+TX_POW_DBM = [-18, -12, -6, -3, -2, -1, 0, 3]
+
+def val_tp(dbm):
+    """
+    convert a power to a valid enum
+
+    :param dbm: power
+    :return: CYBLE_BLESS_PWR_LVL_T
+    """
+    pl = None
+    try:
+        pl = 1 + TX_POW_DBM.index(dbm)
+    except ValueError:
+        for elem in TX_POW_DBM:
+            if elem > dbm:
+                pl = 1 + TX_POW_DBM.index(elem)
+                break
+    if pl is None:
+        pl = len(TX_POW_DBM)
+    return pl
+
+def desc_tp(tp):
+    """
+    convert enum to a string
+
+    :param tp: CYBLE_BLESS_PWR_LVL_T
+    :return: string
+    """
+    if tp <= len(TX_POW_DBM):
+        return '{} dBm'.format(TX_POW_DBM[tp - 1])
+    else:
+        return 'TX POWER ? {} ?'.format(tp)
+
 class _COMMAND:
     def __init__(self, cmd, prm=None):
         self._cod = cmd
@@ -100,10 +183,18 @@ class CY567x(threading.Thread):
     # internal commands
     QUIT = 0xE5C1
     ABORT_CURRENT_COMMAND = 0xACC0
-    # dongle commands (cfr CySmt_CommandLayer.c)
+    # 3 bits group + 7 bits id
+    GENERAL_GROUP = 0 << 7
+    L2CAP_GROUP = 2 << 7
     GATT_GROUP = 4 << 7
+    GAP_GROUP = 5 << 7
+    # dongle commands (cfr CySmt_CommandLayer.c)
     Cmd_Init_Ble_Stack_Api = 0xFC07
+    Cmd_Get_TxPowerLevel_Api = GENERAL_GROUP + 14
+    Cmd_Set_TxPowerLevel_Api = GENERAL_GROUP + 15
     Cmd_Get_Bluetooth_Device_Address_Api = 0xFE82
+    Cmd_Get_Scan_Parameters_Api = 0xFE8A
+    Cmd_Set_Scan_Parameters_Api = 0xFE8B
     Cmd_Start_Scan_Api = 0xFE93
     Cmd_Stop_Scan_Api = 0xFE94
     Cmd_Set_Local_Device_Security_Api = 0xFE8D
@@ -128,7 +219,8 @@ class CY567x(threading.Thread):
     Cmd_Discover_All_Characteristic_Descriptors_Api = 0xFE05
 
     def __init__(self, BAUD=BAUD_CY5677, poll=0.1, porta=None):
-        self._can_print = True
+        self._can_print = False
+        #self._can_print = True
 
         self.proto = {'rx': prt.PROTO_RX(), 'tx': prt.PROTO_TX()}
 
@@ -184,7 +276,11 @@ class CY567x(threading.Thread):
             cc.EVT_DISCOVER_ALL_CHARACTERISTIC_DESCRIPTORS_RESULT_PROGRESS:
             self._evt_gattc_find_info_rsp,
             cc.EVT_READ_CHARACTERISTIC_DESCRIPTOR_RESPONSE:
-            self._evt_gattc_read_rsp
+            self._evt_gattc_read_rsp,
+            cc.EVT_GET_SCAN_PARAMETERS_RESPONSE:
+            self._evt_get_scan_parameters_response,
+            cc.EVT_GET_TX_POWER_RESPONSE:
+            self._evt_get_tx_power_response
         }
 
         self.connection = {'mtu': 23, 'cyBle_connHandle': None}
@@ -412,6 +508,14 @@ class CY567x(threading.Thread):
     def _evt_scan_stopped_notification(self, _):
         self._print('EVT_SCAN_STOPPED_NOTIFICATION')
 
+    def _evt_get_scan_parameters_response(self, prm):
+        cmd = struct.unpack('<H', prm[:2])
+        self._save_data(cmd[0], prm[2:])
+
+    def _evt_get_tx_power_response(self, prm):
+        cmd = struct.unpack('<H', prm[:2])
+        self._save_data(cmd[0], prm[2:])
+
     def _evt_gatt_error_notification(self, prm):
         """
         EVT_GATT_ERROR_NOTIFICATION [8]:
@@ -447,7 +551,8 @@ class CY567x(threading.Thread):
         """
         cmd, _, sh, endh = struct.unpack('<4H', prm)
         # The sequence of operations is complete when ...
-        # or when the End Group Handle in the Find By Type Value Response is 0xFFFF
+        # or when the End Group Handle in the Find By Type Value Response is
+        # 0xFFFF
         if endh == 0xFFFF:
             self._close_command(cmd, 0)
         elif cmd == self.Cmd_Discover_Primary_Services_By_Uuid_Api:
@@ -652,6 +757,35 @@ class CY567x(threading.Thread):
         self._print('init_ble_stack')
         return self._send_command_and_wait(self.Cmd_Init_Ble_Stack_Api)
 
+    def get_txpowerlevel(self, conn=True):
+        """
+        get the power level of the channel
+        :param conn: channel (True == connection, False == advertising)
+        :return: dict or None
+        """
+        self._print('get_txpowerlevel')
+        prm = bytearray([1 if conn else 0])
+        rsp = self._send_command_and_wait(self.Cmd_Get_TxPowerLevel_Api, prm=prm)
+        if not isinstance(rsp, bool):
+            chg, pl = struct.unpack('<BB', rsp)
+            return {
+                'channel': 'CONN' if chg == 1 else 'ADV',
+                'power': desc_tp(pl)
+            }
+
+        return None
+
+    def set_txpowerlevel(self, conn=True, pow=3):
+        self._print('set_txpowerlevel')
+
+        prm = struct.pack('<BB',
+                          1 if conn else 0,
+                          val_tp(pow))
+
+        return self._send_command_and_wait(
+            self.Cmd_Set_TxPowerLevel_Api, prm=prm)
+
+
     def my_address(self, public=True):
         """
         get the dongle address
@@ -666,6 +800,48 @@ class CY567x(threading.Thread):
             return rsp
 
         return None
+
+    def get_scan_parameters(self):
+        """
+        get the parameters currently used
+
+        :return: dict or None
+        """
+        self._print('get_scan_parameters')
+        rsp = self._send_command_and_wait(
+            self.Cmd_Get_Scan_Parameters_Api)
+        if not isinstance(rsp, bool):
+            discProcedure, type, intv, window, ownAddrType, filterPolicy, to, filterDuplicates = struct.unpack(
+                '<BBHHBBHB', rsp)
+
+            return {
+                'discProcedure': desc_dp(discProcedure),
+                'active': type == 1,
+                'interval': intv * 0.625,
+                'window': window * 0.625,
+                'ownAddrType': desc_at(ownAddrType),
+                'filterPolicy': desc_fp(filterPolicy),
+                'to': to,
+                'filterDuplicates': filterDuplicates == 1,
+            }
+
+        return None
+
+    def set_scan_parameters(self, sp):
+        self._print('set_scan_parameters')
+
+        prm = struct.pack('<BBHHBBHB',
+                          valore(sp['discProcedure'], DISCOVERY_PROC),
+                          1 if sp['active'] else 0,
+                          int(sp['interval'] / 0.625),
+                          int(sp['window'] / 0.625),
+                          valore(sp['ownAddrType'], ADDRESS_TYPE),
+                          valore(sp['filterPolicy'], FILTER_POLICY),
+                          sp['to'],
+                          1 if sp['filterDuplicates'] else 0)
+
+        return self._send_command_and_wait(
+            self.Cmd_Set_Scan_Parameters_Api, prm=prm)
 
     def scan_start(self):
         """
@@ -983,6 +1159,24 @@ class CY567x(threading.Thread):
 
         return False
 
+    def write_char_best(self, crt, dati, to=10):
+        """
+        write a characteristic with simple write or write long
+
+        :param crt: handle
+        :param dati: bytearray
+        :param to:  timeout
+        :return: bool
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            mtu = self.connection['mtu']
+            if len(dati) > mtu - 3:
+                return self.write_long_characteristic_value(crt, dati, to=to)
+            else:
+                return self.write_characteristic_value(crt, dati, to=to)
+
+        return False
+
     def read_characteristic_value(self, crt, to=10):
         """
         bt 4.2 - vol 3 - part G - 4.8.1
@@ -1027,6 +1221,24 @@ class CY567x(threading.Thread):
                 self.Cmd_Read_Long_Characteristic_Values_Api, prm=prm, to=to)
             if not isinstance(res, bool):
                 return res
+
+        return None
+
+    def read_char_best(self, crt, dim, to=10):
+        """
+        uses read or read long depending on the expected dimension
+
+        :param crt: handle
+        :param dim: expected
+        :param to: timeout
+        :return: bytearray or None
+        """
+        if self.connection['cyBle_connHandle'] is not None:
+            mtu = self.connection['mtu']
+            if dim <= mtu - 1:
+                return self.read_characteristic_value(crt, to=to)
+            else:
+                return self.read_long_characteristic_value(crt, to=to)
 
         return None
 
@@ -1092,7 +1304,7 @@ class CY567x(threading.Thread):
         """
         sr = scan_report(adv)
         adv = scan_advertise(sr['data'])
-        self._print(str(adv))
+        print(str(adv))
 
     def gap_auth_req_cb(self, ai):
         """
