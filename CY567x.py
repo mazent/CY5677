@@ -190,6 +190,7 @@ class CY567x(threading.Thread):
     GAP_GROUP = 5 << 7
     # dongle commands (cfr CySmt_CommandLayer.c)
     Cmd_Init_Ble_Stack_Api = 0xFC07
+    Cmd_Get_Rssi_Api = GENERAL_GROUP + 13
     Cmd_Get_TxPowerLevel_Api = GENERAL_GROUP + 14
     Cmd_Set_TxPowerLevel_Api = GENERAL_GROUP + 15
     Cmd_Get_Bluetooth_Device_Address_Api = 0xFE82
@@ -280,7 +281,9 @@ class CY567x(threading.Thread):
             cc.EVT_GET_SCAN_PARAMETERS_RESPONSE:
             self._evt_get_scan_parameters_response,
             cc.EVT_GET_TX_POWER_RESPONSE:
-            self._evt_get_tx_power_response
+            self._evt_get_tx_power_response,
+            cc.EVT_GET_RSSI_RESPONSE:
+            self._evt_get_rssi_response
         }
 
         self.connection = {'mtu': 23, 'cyBle_connHandle': None}
@@ -513,6 +516,10 @@ class CY567x(threading.Thread):
         self._save_data(cmd[0], prm[2:])
 
     def _evt_get_tx_power_response(self, prm):
+        cmd = struct.unpack('<H', prm[:2])
+        self._save_data(cmd[0], prm[2:])
+
+    def _evt_get_rssi_response(self, prm):
         cmd = struct.unpack('<H', prm[:2])
         self._save_data(cmd[0], prm[2:])
 
@@ -756,6 +763,14 @@ class CY567x(threading.Thread):
         """
         self._print('init_ble_stack')
         return self._send_command_and_wait(self.Cmd_Init_Ble_Stack_Api)
+
+    def get_rssi(self):
+        self._print('get_rssi')
+        rsp = self._send_command_and_wait(self.Cmd_Get_Rssi_Api)
+        if not isinstance(rsp, bool):
+            return struct.unpack('<b', rsp)[0]
+
+        return None
 
     def get_txpowerlevel(self, conn=True):
         """
