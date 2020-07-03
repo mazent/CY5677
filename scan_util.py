@@ -198,15 +198,12 @@ if __name__ == '__main__':
     if len(sys.argv) != 2:
         print("passare l'uuid")
     else:
-        iuid = uuid.UUID('{' + sys.argv[1] + '}')
+        ba_uid = ba_from_stringuuid(sys.argv[1])
 
-        _uid = bytearray(iuid.bytes)
-        _uid.reverse()
-
-        uid_srv = uuid.UUID(bytes=bytes(_uid))
-        uid = bytearray(uid_srv.bytes)
+        uid_srv = uuid.UUID(bytes=bytes(ba_uid))
+        b_uid = bytearray(uid_srv.bytes)
         cuid = ''
-        for x in uid:
+        for x in b_uid:
             cuid += '0x{:02X}, '.format(x)
 
         print(cuid)

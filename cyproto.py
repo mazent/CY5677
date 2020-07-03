@@ -30,17 +30,25 @@ class PROTO:
 
         # protocol state
         self.partial = bytearray()
-        self.state = 'idle'
-        self.dim = -1
+        self.stati = {
+            0: self._stato_0,
+            1: self._stato_1,
+            2: self._stato_2
+        }
+        self.stato = 0
 
-    def reinit(self):
+
+    def reinit(self, start=False):
         """
         Come back to the initial state
         :return: n.a.
         """
         self.partial = bytearray()
-        self.dim = -1
-        self.state = 'idle'
+        if start:
+            # the first byte is arrived
+            self.stato = 1
+        else:
+            self.stato = 0
 
     def who_are_you(self):
         """
@@ -59,41 +67,37 @@ class PROTO:
 
         return None
 
+    def _stato_0(self, rx):
+        if rx == self.first:
+            self.stato = 1
+        return False
+
+    def _stato_1(self, rx):
+        if rx == self.second:
+            self.stato = 2
+        else:
+            if len(self.partial):
+                self._print('_stato_1 elimino {}'.format(utili.esa_da_ba(self.partial, '-')))
+            self.reinit()
+        return False
+
+    def _stato_2(self, rx):
+        if rx == self.first:
+            return True
+
+        self.partial.append(rx)
+        return False
+
     def examine(self, questi):
-        """
-        inspect new data and extract messages
-        :param questi: bytearray of data collected from serial port
-        :return: n.a. (call get_msg)
-        """
         for cosa in questi:
-            if cosa == self.first:
-                # start of header
-                self.state = 'header'
-            elif cosa == self.second:
-                # end of header
-                if self.state == 'header':
-                    # new message
-                    if len(self.partial):
-                        # add the previous to the list
-                        self.msg_list.append(bytearray(self.partial))
-                        self.reinit()
-                    self.state = 'msg'
-                else:
-                    # add to the current message
-                    self.partial.append(cosa)
-            else:
-                # other
-                if self.state == 'header':
-                    # previous byte was not header's start
-                    self.partial.append(self.first)
-                    self.state = 'idle'
-                self.partial.append(cosa)
+            if self.stati[self.stato](cosa):
+                self.check_packet(True)
 
-                self.check_len()
+        self.check_packet()
 
-    def check_len(self):
+    def check_packet(self, start=False):
         """
-        message lenght is in different positions: override this to catch messages
+        message length is in different positions: override this to catch messages
         :return: n.a.
         """
 
@@ -113,20 +117,28 @@ class PROTO_RX(PROTO):
     def __init__(self):
         PROTO.__init__(self, 'RX', 0xBD, 0xA7)
 
-    def check_len(self):
-        if self.dim < 0:
-            # calculate dimension
-            if len(self.partial) == 4:
-                tot, _ = struct.unpack('<2H', self.partial[:4])
-                self.dim = tot + 2
+    def check_packet(self, start=False):
+        def empty_partial():
+            # a new packet starts
+            if len(self.partial):
+                self._print('scarto ' + utili.esa_da_ba(self.partial, '-'))
+                self.reinit(True)
 
-        if self.dim == len(self.partial):
-            # got it!
-            self.msg_list.append(bytearray(self.partial))
+        if len(self.partial) >= 4:
+            tot, _ = struct.unpack('<2H', self.partial[:4])
+            tot += 2
 
-            self.reinit()
-        else:
-            pass
+            if tot == len(self.partial):
+                # got it!
+                self.msg_list.append(bytearray(self.partial))
+
+                self.reinit(start)
+            elif start:
+                empty_partial()
+            else:
+                pass
+        elif start:
+            empty_partial()
 
     def decompose(self, cosa):
         """
@@ -142,8 +154,8 @@ class PROTO_RX(PROTO):
 
             if tot != len(prm):
                 self._print(self.name +
-                      ' ERR DIM {:04X}[{} != {}]: '.format(evn, tot, len(
-                          prm)) + utili.esa_da_ba(prm, ' '))
+                            ' ERR DIM {:04X}[{} != {}]: '.format(evn, tot, len(
+                                prm)) + utili.esa_da_ba(prm, ' '))
             else:
                 msg['evn'] = evn
                 msg['prm'] = prm
@@ -170,7 +182,7 @@ class PROTO_RX(PROTO):
                     tot, len(prm)) + '\n\t' + utili.esa_da_ba(prm, ' ')
             else:
                 risul += '[{}]: '.format(tot) + '\n\t' + \
-                    utili.esa_da_ba(prm, ' ')
+                         utili.esa_da_ba(prm, ' ')
         else:
             risul += '????: ' + '\n\t' + utili.esa_da_ba(cosa, ' ')
 
@@ -187,20 +199,18 @@ class PROTO_TX(PROTO):
     def __init__(self):
         PROTO.__init__(self, 'TX', 0x43, 0x59)
 
-    def check_len(self):
-        if self.dim < 0:
-            # compute dimension
-            if len(self.partial) == 4:
-                _, tot = struct.unpack('<2H', self.partial[:4])
-                self.dim = tot + 4
+    def check_packet(self, start=False):
+        if len(self.partial) >= 4:
+            _, tot = struct.unpack('<2H', self.partial[:4])
+            tot += 4
 
-        if self.dim == len(self.partial):
-            # got it!
-            self.msg_list.append(bytearray(self.partial))
+            if tot == len(self.partial):
+                # got it!
+                self.msg_list.append(bytearray(self.partial))
 
-            self.reinit()
-        else:
-            pass
+                self.reinit(start)
+            else:
+                pass
 
     def msg_to_string(self, cosa):
         risul = self.name + ' '
@@ -215,7 +225,7 @@ class PROTO_TX(PROTO):
                     prm)) + '\n\t' + utili.esa_da_ba(prm, ' ')
             else:
                 risul += '[{}]: '.format(tot) + '\n\t' + \
-                    utili.esa_da_ba(prm, ' ')
+                         utili.esa_da_ba(prm, ' ')
         else:
             risul += '????: ' + '\n\t' + utili.esa_da_ba(cosa, ' ')
 

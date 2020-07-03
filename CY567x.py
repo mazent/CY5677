@@ -80,14 +80,17 @@ DISCOVERY_PROC = {
     2: 'General discovery'
 }
 
+
 def desc_dp(dp):
     try:
         return DISCOVERY_PROC[dp]
     except KeyError:
         return 'DISCOVERY PROC ? {} ?'.format(dp)
 
+
 # CYBLE_BLESS_PWR_LVL_T will be the index + 1
 TX_POW_DBM = [-18, -12, -6, -3, -2, -1, 0, 3]
+
 
 def val_tp(dbm):
     """
@@ -108,6 +111,7 @@ def val_tp(dbm):
         pl = len(TX_POW_DBM)
     return pl
 
+
 def desc_tp(tp):
     """
     convert enum to a string
@@ -117,8 +121,9 @@ def desc_tp(tp):
     """
     if tp <= len(TX_POW_DBM):
         return '{} dBm'.format(TX_POW_DBM[tp - 1])
-    else:
-        return 'TX POWER ? {} ?'.format(tp)
+
+    return 'TX POWER ? {} ?'.format(tp)
+
 
 class _COMMAND:
     def __init__(self, cmd, prm=None):
@@ -780,7 +785,8 @@ class CY567x(threading.Thread):
         """
         self._print('get_txpowerlevel')
         prm = bytearray([1 if conn else 0])
-        rsp = self._send_command_and_wait(self.Cmd_Get_TxPowerLevel_Api, prm=prm)
+        rsp = self._send_command_and_wait(
+            self.Cmd_Get_TxPowerLevel_Api, prm=prm)
         if not isinstance(rsp, bool):
             chg, pl = struct.unpack('<BB', rsp)
             return {
@@ -790,16 +796,15 @@ class CY567x(threading.Thread):
 
         return None
 
-    def set_txpowerlevel(self, conn=True, pow=3):
+    def set_txpowerlevel(self, conn=True, pot=3):
         self._print('set_txpowerlevel')
 
         prm = struct.pack('<BB',
                           1 if conn else 0,
-                          val_tp(pow))
+                          val_tp(pot))
 
         return self._send_command_and_wait(
             self.Cmd_Set_TxPowerLevel_Api, prm=prm)
-
 
     def my_address(self, public=True):
         """
@@ -826,12 +831,12 @@ class CY567x(threading.Thread):
         rsp = self._send_command_and_wait(
             self.Cmd_Get_Scan_Parameters_Api)
         if not isinstance(rsp, bool):
-            discProcedure, type, intv, window, ownAddrType, filterPolicy, to, filterDuplicates = struct.unpack(
+            discProcedure, tipo, intv, window, ownAddrType, filterPolicy, to, filterDuplicates = struct.unpack(
                 '<BBHHBBHB', rsp)
 
             return {
                 'discProcedure': desc_dp(discProcedure),
-                'active': type == 1,
+                'active': tipo == 1,
                 'interval': intv * 0.625,
                 'window': window * 0.625,
                 'ownAddrType': desc_at(ownAddrType),
@@ -1063,7 +1068,7 @@ class CY567x(threading.Thread):
 
         return None
 
-    def exchange_gatt_mtu_size(self, mtu):
+    def exchange_gatt_mtu_size(self, mtu=512):
         """
         try to change mtu size
         :param mtu: 23 <= mtu <= 512
@@ -1187,8 +1192,8 @@ class CY567x(threading.Thread):
             mtu = self.connection['mtu']
             if len(dati) > mtu - 3:
                 return self.write_long_characteristic_value(crt, dati, to=to)
-            else:
-                return self.write_characteristic_value(crt, dati, to=to)
+
+            return self.write_characteristic_value(crt, dati, to=to)
 
         return False
 
@@ -1252,8 +1257,8 @@ class CY567x(threading.Thread):
             mtu = self.connection['mtu']
             if dim <= mtu - 1:
                 return self.read_characteristic_value(crt, to=to)
-            else:
-                return self.read_long_characteristic_value(crt, to=to)
+
+            return self.read_long_characteristic_value(crt, to=to)
 
         return None
 
@@ -1311,6 +1316,7 @@ class CY567x(threading.Thread):
 
         return False
 
+    # pylint: disable=no-self-use
     def scan_progress_cb(self, adv):
         """
         callback invoked when an advertisement is received

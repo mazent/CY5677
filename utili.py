@@ -11,6 +11,9 @@ import threading
 import random
 import string
 import time
+# solo python 3
+import tkinter.filedialog as dialogo
+
 
 
 def validaStringa(x, dimmin=None, dimmax=None):
@@ -435,11 +438,7 @@ def stringa_casuale(dim):
 class CRONOMETRO():
     def __init__(self):
         self.inizio = 0
-        # if sys.platform.startswith("win32"):
-        #     self.tempo = time.clock
-        # else:
-        #     self.tempo = time.time
-        self.tempo = time.time
+        self.tempo = time.perf_counter
 
     def conta(self):
         self.inizio = self.tempo()
@@ -474,6 +473,24 @@ class LOGGA:
     def critical(self, msg):
         if self.logger is not None:
             self.logger.critical(msg)
+
+def scegli_file_esistente(master, filetypes):
+    opzioni = {
+        'parent': master,
+        'filetypes': filetypes,
+        'title': 'Scegli il file',
+        'defaultextension': filetypes[0][1]
+    }
+    filename = dialogo.askopenfilename(**opzioni)
+
+    if filename is None:
+        return None
+
+    if not any(filename):
+        return None
+
+    return filename
+
 
 def girino(x):
     _girino = ['-', '\\', '|', '/', '*']

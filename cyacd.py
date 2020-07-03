@@ -6,6 +6,28 @@ import string
 import struct
 
 
+def _convert(char):
+    if char in string.digits:
+        return ord(char) - ord('0')
+    char = char.upper()
+    if char in string.hexdigits:
+        return ord(char) - ord('A') + 10
+    return 0
+
+
+def _bytes_from_char(a_row):
+    a_row = a_row.strip('\n')
+
+    res = bytearray()
+    while len(a_row) >= 2:
+        msb = _convert(a_row[0])
+        lsb = _convert(a_row[1])
+        val = (msb << 4) + lsb
+        res.append(val)
+        a_row = a_row[2:]
+    return res
+
+
 class CYACD:
     def __init__(self):
         # CYDEV_CHIP_JTAG_ID
@@ -23,7 +45,8 @@ class CYACD:
         self.cks_type = x[2]
         print('silicon id {:08X}'.format(self.sil_id))
 
-    def _CyBtldr_ParseRowData(self, nextrow):
+    @staticmethod
+    def _CyBtldr_ParseRowData(nextrow):
         checksum = nextrow[-1]
         nextrow.pop(-1)
 
@@ -54,31 +77,11 @@ class CYACD:
             'row': row
         }
 
-    def _convert(self, char):
-        if char in string.digits:
-            return ord(char) - ord('0')
-        char = char.upper()
-        if char in string.hexdigits:
-            return ord(char) - ord('A') + 10
-        return 0
-
-    def _bytes_from_char(self, a_row):
-        a_row = a_row.strip('\n')
-
-        res = bytearray()
-        while len(a_row) >= 2:
-            msb = self._convert(a_row[0])
-            lsb = self._convert(a_row[1])
-            val = (msb << 4) + lsb
-            res.append(val)
-            a_row = a_row[2:]
-        return res
-
     def load(self, filename):
         with open(filename, 'rt') as ing:
             # first row
             ur = ing.readline()
-            ba = self._bytes_from_char(ur)
+            ba = _bytes_from_char(ur)
             self._CyBtldr_ParseHeader(ba)
 
             while True:
@@ -87,7 +90,7 @@ class CYACD:
                     break
 
                 # remove starting :
-                ba = self._bytes_from_char(ur[1:])
+                ba = _bytes_from_char(ur[1:])
 
                 # next row
                 rd = self._CyBtldr_ParseRowData(ba)

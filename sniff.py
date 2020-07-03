@@ -42,8 +42,8 @@ def estrai(oper, proto, lista):
         msg = proto.get_msg()
         if msg is None:
             break
-        else:
-            lista.append((oper, msg))
+
+        lista.append((oper, msg))
 
 
 def leggi_ingresso(nfile, proto_rx, proto_tx):
