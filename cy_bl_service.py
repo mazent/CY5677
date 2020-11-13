@@ -44,7 +44,7 @@ class CY_BL_SERVICE:
         # pylint: disable=unused-argument,no-self-use
         return False
 
-    def write_long_characteristic_value(self, crt, dati, ofs=0, to=5):
+    def write_char_best(self, crt, dati, to=5):
         """
         this method must be implemented, e.g. by CY567x
         """
@@ -151,7 +151,7 @@ class CY_BL_SERVICE:
         msg += self._bl_pkt_trail(msg)
 
         self._reset('BLR')
-        if self.write_long_characteristic_value(self.blc, msg, to=to):
+        if self.write_char_best(self.blc, msg, to=to):
             try:
                 blr = self.sincro['blr'].get(True, to)
                 msg = self._bl_get_msg(blr)
@@ -188,7 +188,7 @@ class CY_BL_SERVICE:
         msg += self._bl_pkt_trail(msg)
 
         self._reset('BLR')
-        if self.write_long_characteristic_value(self.blc, msg, to=to):
+        if self.write_char_best(self.blc, msg, to=to):
             try:
                 blr = self.sincro['blr'].get(True, to)
                 msg = self._bl_get_msg(blr)

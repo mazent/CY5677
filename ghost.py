@@ -18,7 +18,6 @@ import privacy as prv
 srv_conf = 'C18594D9-DFF5-4552-89F8-0F2940D1E32D'
 srv_norm = '4A7A3045-BCD8-4ACA-B5AE-95FB82EEB222'
 
-
 # Verificare che siano uguali a quelle in BT_custom.h
 # srv_norm
 CYBLE_SERVICE_AUTHOR_CHAR_HANDLE = 0x0018
@@ -27,6 +26,65 @@ CYBLE_SERVICE_CMD_CHAR_HANDLE = 0x001A
 CYBLE_CONFIG_AUTHOR_CHAR_HANDLE = 0x0012
 CYBLE_CONFIG_CMD_CHAR_HANDLE = 0x0014
 CYBLE_CONFIG_CMD_CLIENT_CHARACTERISTIC_CONFIGURATION_DESC_HANDLE = 0x0015
+
+
+def nsp_from(service_data):
+    """
+    retituisce il numero di serie del prodotto dal service data
+    :param service_data: bytearray
+    :return: string
+    """
+    # lettere e numeri compressi
+    cp = struct.unpack('<I', service_data[:4])[0]
+    _nsp = ''
+    for _ in range(5):
+        x = cp & 0x3F
+        if x < 10:
+            _nsp = _nsp + chr(x + ord('0'))
+        elif x <= 35:
+            _nsp = _nsp + chr(x - 10 + ord('A'))
+        else:
+            _nsp = _nsp + chr(x - 36 + ord('a'))
+        cp >>= 6
+    # numero progressivo
+    np = bytearray(service_data[4:])
+    np.append(0)
+    prog = struct.unpack('<I', np)[0]
+    return _nsp + '{:06d}'.format(prog)
+
+
+def service_data_from(numserprod):
+    """
+    calcola il service data a partire dal numero di serie del prodotto
+    :param numserprod: string
+    :return: bytearray
+    """
+    tmp = 0
+    sposta = 0
+    pc = numserprod[:5]
+    for _elem in pc:
+        val = 0
+        if _elem.isdigit():
+            val = int(_elem)
+        elif _elem.isupper():
+            val = ord(_elem) - ord('A')
+            val += 10
+        elif _elem.islower():
+            val = ord(_elem) - ord('a')
+            val += 36
+        else:
+            pass
+        tmp += val << sposta
+        sposta += 6
+    gsd = struct.pack('<I', tmp)
+
+    # seguono sei cifre decimali -> bastano 3 byte
+    prog = int(numserprod[5:])
+    tmp = bytearray(struct.pack('<I', prog))
+    del tmp[-1]
+    gsd += tmp
+
+    return gsd
 
 
 class GHOST_COMMAND:
@@ -79,18 +137,11 @@ class GHOST_COMMAND:
         """
         return False
 
+
 class GHOST_NORM(GHOST_COMMAND):
     """
     collects commands valid only during NORM phase
     """
-
-    def clear_alarm(self, to=3):
-        """
-        resets the alarm
-        :param to: timeout
-        :return: bool
-        """
-        return self.cmd_void_void(CYBLE_SERVICE_CMD_CHAR_HANDLE, 0x58, to=to)
 
     def goto_CONF(self, to=3):
         """
@@ -108,6 +159,32 @@ class GHOST_NORM(GHOST_COMMAND):
         """
         return self.cmd_void_void(CYBLE_SERVICE_CMD_CHAR_HANDLE, 0xA0, to=to)
 
+    def set_epoch_n(self, sse):
+        """
+        set the seconds since the epoch
+        :param sse: seconds since the epoch
+        """
+        prm = struct.pack('<I', sse)
+        return self.cmd_prm_void(CYBLE_SERVICE_CMD_CHAR_HANDLE, 0xB1, prm)
+
+    def cpu_stat(self):
+        """
+        various cpu data (mainly for battery management)
+        :return: dict
+        """
+        rsp = self.cmd_void_rsp(CYBLE_SERVICE_CMD_CHAR_HANDLE, 0x56, dim=20)
+        if rsp is not None:
+            giorni, secondi, reset, pon, gupo = struct.unpack('<5I', rsp)
+            return {
+                'giorni': giorni,
+                'secondi': secondi,
+                'reset': reset,
+                'pon': pon,
+                'gupo': gupo
+            }
+
+        return None
+
 
 class GHOST_CONF(GHOST_COMMAND):
     """
@@ -119,7 +196,8 @@ class GHOST_CONF(GHOST_COMMAND):
         enables notifications and indications
         :return: bool
         """
-        return self.enable_notify_indicate(CYBLE_CONFIG_CMD_CLIENT_CHARACTERISTIC_CONFIGURATION_DESC_HANDLE)
+        return self.enable_notify_indicate(
+            CYBLE_CONFIG_CMD_CLIENT_CHARACTERISTIC_CONFIGURATION_DESC_HANDLE)
 
     def read_times(self, to=3):
         """
@@ -127,10 +205,10 @@ class GHOST_CONF(GHOST_COMMAND):
         :param to: timeout
         :return: tuple or None
         """
-        prm = self.cmd_void_rsp(
+        rsp = self.cmd_void_rsp(
             CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x8C, dim=6, to=to)
-        if prm is not None:
-            return struct.unpack('<3H', prm)
+        if rsp is not None:
+            return struct.unpack('<3H', rsp)
 
         return None
 
@@ -163,16 +241,24 @@ class GHOST_CONF(GHOST_COMMAND):
         """
         return self.cmd_void_void(CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xD2, to=to)
 
+    def exit_MAGA(self, to=3):
+        """
+        Set CONF as the next phase
+        :param to: timeout
+        :return: bool
+        """
+        return self.cmd_void_void(CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x91, to=to)
+
     def read_ver(self, to=3):
         """
         send the command to read the version
         :param to: timeout
         :return: string or None
         """
-        prm = self.cmd_void_rsp(
+        rsp = self.cmd_void_rsp(
             CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x57, dim=4, to=to)
-        if prm is not None:
-            glob = struct.unpack('<I', prm)[0]
+        if rsp is not None:
+            glob = struct.unpack('<I', rsp)[0]
             mino = glob & 0x00FFFFFF
             magg = glob >> 24
 
@@ -185,89 +271,61 @@ class GHOST_CONF(GHOST_COMMAND):
 
         return None
 
-    def read_tel(self, to=3):
-        """
-        send the command to read the phone number that will receive the alarm sms
-        :param to: timeout
-        :return: string
-        """
-        prm = self.cmd_void_rsp(
-            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xF3, to=to)
-        if prm is not None:
-            return prm.decode('ascii')
+    # def read_tel(self, to=3):
+    #     """
+    #     send the command to read the phone number that will receive the alarm sms
+    #     :param to: timeout
+    #     :return: string
+    #     """
+    #     rsp = self.cmd_void_rsp(
+    #         CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xF3, to=to)
+    #     if rsp is not None:
+    #         return rsp.decode('ascii')
+    #
+    #     return None
 
-        return None
+    # def write_tel(self, tel, to=3):
+    #     """
+    #     send the command to write the phone number that will receive the alarm sms
+    #     :param tel: string
+    #     :param to: timeout
+    #     :return: bool
+    #     """
+    #     if tel is None:
+    #         return self.cmd_void_void(
+    #             CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x32, to=to)
+    #
+    #     prm = tel.encode('ascii')
+    #     return self.cmd_prm_void(
+    #         CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x32, prm, to=to)
 
-    def write_tel(self, tel, to=3):
-        """
-        send the command to write the phone number that will receive the alarm sms
-        :param tel: string
-        :param to: timeout
-        :return: bool
-        """
-        if tel is None:
-            return self.cmd_void_void(
-                CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x32, to=to)
+    # def read_fsms(self, to=3):
+    #     """
+    #     send the command to read the sms format string
+    #     :param to: timeout
+    #     :return: string
+    #     """
+    #     rsp = self.cmd_void_rsp(
+    #         CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xEB, to=to)
+    #     if rsp is not None:
+    #         return rsp.decode('ascii')
+    #
+    #     return None
 
-        prm = tel.encode('ascii')
-        return self.cmd_prm_void(
-            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x32, prm, to=to)
-
-    def read_fsms(self, to=3):
-        """
-        send the command to read the sms format string
-        :param to: timeout
-        :return: string
-        """
-        prm = self.cmd_void_rsp(
-            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xEB, to=to)
-        if prm is not None:
-            return prm.decode('ascii')
-
-        return None
-
-    def write_fsms(self, sms_fs, to=3):
-        """
-        send the command to write the sms format string
-        :param sms_fs: string
-        :param to: timeout
-        :return: bool
-        """
-        if sms_fs is None:
-            return self.cmd_void_void(
-                CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x78, to=to)
-
-        prm = sms_fs.encode('ascii')
-        return self.cmd_prm_void(
-            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x78, prm, to=to)
-
-    def read_apn(self, to=3):
-        """
-        send the command to read the APN
-        :param to: timeout
-        :return: string
-        """
-        prm = self.cmd_void_rsp(
-            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x49, to=to)
-        if prm is not None:
-            return prm.decode('ascii')
-
-        return None
-
-    def write_apn(self, net_apn, to=3):
-        """
-        send the command to write the APN
-        :param net_apn: string
-        :param to: timeout
-        :return: bool
-        """
-        if net_apn is None:
-            return self.cmd_void_void(
-                CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x24, to=to)
-
-        prm = net_apn.encode('ascii')
-        return self.cmd_prm_void(
-            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x24, prm, to=to)
+    # def write_fsms(self, sms_fs, to=3):
+    #     """
+    #     send the command to write the sms format string
+    #     :param sms_fs: string
+    #     :param to: timeout
+    #     :return: bool
+    #     """
+    #     if sms_fs is None:
+    #         return self.cmd_void_void(
+    #             CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x78, to=to)
+    #
+    #     prm = sms_fs.encode('ascii')
+    #     return self.cmd_prm_void(
+    #         CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x78, prm, to=to)
 
     def read_broker(self, to=3):
         """
@@ -275,13 +333,13 @@ class GHOST_CONF(GHOST_COMMAND):
         :param to: timeout
         :return: dict
         """
-        prm = self.cmd_void_rsp(
+        rsp = self.cmd_void_rsp(
             CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x96, to=to)
-        if prm is not None:
+        if rsp is not None:
             broker = {}
-            if len(prm) > 2:
-                porta = struct.unpack('<H', prm[:2])
-                indi = prm[2:]
+            if len(rsp) > 2:
+                porta = struct.unpack('<H', rsp[:2])
+                indi = rsp[2:]
 
                 broker['port'] = porta[0]
                 broker['address'] = indi.decode('ascii')
@@ -319,6 +377,64 @@ class GHOST_CONF(GHOST_COMMAND):
         return self.cmd_prm_void(
             CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xA5, prm, to=to)
 
+    def set_epoch_c(self, sse, to=3):
+        """
+        set the seconds since the epoch
+        :param sse: seconds since the epoch
+        :return: bool
+        """
+        prm = struct.pack('<I', sse)
+        return self.cmd_prm_void(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xB1, prm, to=to)
+
+    def read_epoch(self, to=3):
+        """
+        read device epoch
+        :param to: timeout
+        :return: epoc or None
+        """
+        rsp = self.cmd_void_rsp(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x2A, to=to, dim=4)
+        if rsp is not None:
+            return struct.unpack('<I', rsp)[0]
+
+        return None
+
+    def write_all_tmd(self, gprs, ritenta, intervallo, slip=0, to=3):
+        """
+        write the parameters for tmd style alarms
+        :param gprs: timeout for network activation (seconds)
+        :param ritenta: sms retries
+        :param intervallo: timeout after sms failure (seconds)
+        :param slip: sleep period
+        :return: bool
+        """
+        prm = struct.pack('<HB2H', gprs, ritenta, intervallo, slip)
+        return self.cmd_prm_void(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x14, prm, to=to)
+
+    def read_all_tmd(self, to=3):
+        """
+        read the parameters for tmd style alarms
+        :param to: timeout
+        :return: dict or None
+        """
+        rsp = self.cmd_void_rsp(
+            CYBLE_CONFIG_CMD_CHAR_HANDLE,
+            0x3C,
+            dim=2 + 1 + 2 + 2,
+            to=to)
+        if rsp is not None:
+            gprs, ritenta, intervallo, slip = struct.unpack('<HB2H', rsp)
+            return {
+                'gprs': gprs,
+                'ritenta': ritenta,
+                'intervallo': intervallo,
+                'slip': slip
+            }
+
+        return None
+
 
 class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
     """
@@ -330,9 +446,15 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
     CYBLE_SERVICE_CHANGED_CHAR_HANDLE = 0x000E
 
     def abil_var_servizi(self, evento):
+        """
+        enable service changed notification
+        :param evento: threading.Event
+        :return: bool
+        """
         self.sincro['uvs'] = evento
         msg = struct.pack('<H', 0x0003)
-        return self.write_characteristic_value(self.CYBLE_SERVICE_CHANGED_CLIENT_CHARACTERISTIC_CONFIGURATION_DESC_HANDLE, msg)
+        return self.write_characteristic_value(
+            self.CYBLE_SERVICE_CHANGED_CLIENT_CHARACTERISTIC_CONFIGURATION_DESC_HANDLE, msg)
 
     def _reset(self, coda):
         tq = self.sincro['rsp']
@@ -344,11 +466,11 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
         while not tq.empty():
             try:
                 tq.get_nowait()
-                #tq.task_done()
+                # tq.task_done()
             except queue.Empty:
                 break
 
-    def __init__(self, porta=None):
+    def __init__(self, porta=None, logga=False):
         # prima di sincro!
         bl.CY_BL_SERVICE.__init__(self)
 
@@ -379,6 +501,11 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
 
         self.disc = None
 
+        if logga:
+            self.logger = utili.LOGGA('ghost')
+        else:
+            self.logger = utili.LOGGA()
+
         try:
             if not self.is_ok():
                 raise utili.Problema('not OK')
@@ -397,9 +524,31 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
                 raise utili.Problema('err bdaddr')
 
             self.mio = mio
-            print('io sono ' + utili.str_da_mac(mio))
+            self.logger.debug('io sono ' + utili.str_da_mac(mio))
+        except utili.Problema as err:
+            self.logger.critical(str(err))
+
+    def reiniz(self):
+        """
+        reinit cy5677 dongle
+        :return: bool
+        """
+        try:
+            self.disconnect()
+
+            if not self.init_ble_stack():
+                raise utili.Problema('err init')
+
+            if not self.set_device_io_capabilities('KEYBOARD DISPLAY'):
+                raise utili.Problema('err capa')
+
+            if not self.set_local_device_security('3'):
+                raise utili.Problema('err security')
+
+            return True
         except utili.Problema as err:
             print(err)
+            return False
 
     def set_disc(self, func):
         """
@@ -417,8 +566,9 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
         """
         if self.sincro['user'] is None:
             self.srvdata = None
-            if self.scan_start():
-                self.sincro['user'] = coda
+            self.sincro['user'] = coda
+            if not self.scan_start():
+                self.sincro['user'] = None
 
             return self.sincro['user'] is not None
 
@@ -436,30 +586,16 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
             return False
         return True
 
-    def find(self, cp, to=3):
+    def find(self, cp, to=10):
         """
         find the ghost with a specific serial number
         :param cp: serial number (i.e. 'XXXAT000000')
         :param to: timeout
         :return: dict (cfr scan_report) or None
         """
-        # compute its service data
-        uc = cp[:5].upper()
-        cpc = 0
-        base = ord('A')
-        for i in range(-1, -6, -1):
-            cpc <<= 6
-            cpc += ord(uc[i]) - base
 
-        sdata = struct.pack('<I', cpc)
-
-        prog = int(cp[5:])
-        tmp = bytearray(struct.pack('<I', prog))
-        del tmp[-1]
-
-        sdata += tmp
-
-        print('sdata: ' + utili.esa_da_ba(sdata, ' '))
+        sdata = service_data_from(cp)
+        self.logger.info('find <' + cp + '> => ' + utili.esa_da_ba(sdata, ' '))
 
         self.srvdata = sdata
 
@@ -489,7 +625,7 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
         pqb = struct.unpack('<I', x[:4])
         return pqb[0] % 1000000
 
-    def connect_to(self, bda, mode, secret, to=15):
+    def connect_to(self, bda, mode, secret, to=20):
         """
         execute connection with authentication and authorization
         :param bda: mac address (bytearray)
@@ -498,8 +634,10 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
         :param to: timeout
         :return: bool
         """
+        self.logger.info('connect_to')
+
         pk = self._compute_passkey(bda, secret)
-        print('passkey={:06d}'.format(pk))
+        self.logger.debug('passkey={:06d}'.format(pk))
 
         self.sincro['authReq'].clear()
         self.sincro['pairReq'].clear()
@@ -527,8 +665,8 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
             if not self.pairing_passkey(pk):
                 raise utili.Problema('err passkey')
 
-            # wait for the challenge
-            time.sleep(1)
+            # la cy5677 non funziona benissimo
+            time.sleep(2)
 
             # authorization
             crt_ = CYBLE_SERVICE_AUTHOR_CHAR_HANDLE
@@ -540,7 +678,7 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
             return True
 
         except utili.Problema as err:
-            print(err)
+            self.logger.error(str(err))
             return False
 
     def _authorize(self, car):
@@ -550,10 +688,12 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
         """
         chl = self.read_characteristic_value(car)
         if chl is None:
+            self.logger.error("_authorize.read_characteristic_value")
             return False
 
         challenge = self.priv.decrypt(chl)
         if challenge is None:
+            self.logger.error("_authorize.decrypt")
             return False
 
         pt = bytearray(self.mio)
@@ -619,7 +759,6 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
         rsp = self._send_cmd_and_rx_rsp(char, msg, to, cmd)
         return rsp is not None
 
-
     def cmd_void_rsp(self, char, cmd, dim=None, to=3):
         msg = self._create_command(cmd)
 
@@ -650,30 +789,25 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
         msg = struct.pack('<H', 0x0003)
         return self.write_characteristic_value(char, msg)
 
-    def _find_all_ghosts(self, sd, un_sr):
-        cp = struct.unpack('<I', sd[:4])[0]
-        nome = ''
-        for _ in range(5):
-            x = cp & 0x3F
-            nome = nome + chr(x + 0x41)
-            cp >>= 6
-        sd = sd[4:]
-        sd.append(0)
-        prog = struct.unpack('<I', sd)[0]
-        un_sr['prod'] = nome + '{:06d}'.format(prog)
+    def _find_all_ghosts(self, _sd, un_sr):
+        un_sr['prod'] = nsp_from(_sd)
+        self.logger.info('trovato ' + str(un_sr))
         self.sincro['user'].put_nowait(un_sr)
 
-    def scan_progress_cb(self, adv):
+    def scan_progress_cb(self, adv: bytearray):
         sr = scan_util.scan_report(adv)
+        self.logger.debug(str(sr))
         if sr['adv_type'] != 'Connectable undirected advertising':
             return
 
         adv = scan_util.scan_advertise(sr['data'])
+        self.logger.debug(str(adv))
         for _elem in adv:
             if _elem[0] != 'srvd128':
                 continue
 
             if _elem[1] in (srv_norm, srv_conf):
+                self.logger.info(str(adv))
                 sr['fase'] = 'NORM' if _elem[1] == srv_norm else 'CONF'
                 if self.srvdata is None:
                     self._find_all_ghosts(_elem[2], sr)
@@ -720,7 +854,13 @@ if __name__ == '__main__':
 
     import argparse
 
-    FAKE_PRD = 'XXXpy413589'
+    FAKE_PRD = 'TD3py239168'
+
+    sd = service_data_from(FAKE_PRD)
+    print(utili.esa_da_ba(sd, ' '))
+    nsp = nsp_from(sd)
+    print(nsp)
+    print(FAKE_PRD == nsp)
 
     FAKE_SECRET = bytes([
         0x1D, 0x2B, 0xE0, 0x8B, 0xF0, 0x37, 0x1C, 0x60,
@@ -737,7 +877,7 @@ if __name__ == '__main__':
     argom = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=DESCRIZIONE)
-    #argom.add_argument('mac', help="L'indirizzo del dispositivo (xx:yy:..ww)")
+    # argom.add_argument('mac', help="L'indirizzo del dispositivo (xx:yy:..ww)")
     argom.add_argument(
         '--mtu',
         type=int,
@@ -755,7 +895,7 @@ if __name__ == '__main__':
     #     help='numero di pacchetti da spedire (pred: 0 = infiniti)')
     arghi = argom.parse_args()
 
-    #MAC = arghi.mac
+    # MAC = arghi.mac
     MTU = arghi.mtu
     # DIM = arghi.dim
     # NUM = arghi.num
@@ -791,27 +931,27 @@ if __name__ == '__main__':
                     raise utili.Problema('err write_times')
                 print('write_times OK')
 
-                ntel = ghost.read_tel()
-                if ntel is None:
-                    raise utili.Problema('err read_tel')
-                print('ntel=<' + ntel + '>')
+                # ntel = ghost.read_tel()
+                # if ntel is None:
+                #     raise utili.Problema('err read_tel')
+                # print('ntel=<' + ntel + '>')
 
-                fsms = ghost.read_fsms()
-                if fsms is None:
-                    raise utili.Problema('err read_fsms')
-                print('fsms=<' + fsms + '>')
+                # fsms = ghost.read_fsms()
+                # if fsms is None:
+                #     raise utili.Problema('err read_fsms')
+                # print('fsms=<' + fsms + '>')
 
-                if not ghost.write_fsms('data=%d, ora=%h, lat=%a, lon=%o'):
-                    raise utili.Problema('err write_fsms')
-                print('nuovo fsms')
+                # if not ghost.write_fsms('data=%d, ora=%h, lat=%a, lon=%o'):
+                #     raise utili.Problema('err write_fsms')
+                # print('nuovo fsms')
 
                 if not ghost.goto_NORM():
                     raise utili.Problema('err goto_NORM')
                 print('goto_NORM OK')
             else:
-                if not ghost.clear_alarm():
-                    raise utili.Problema('err clear_alarm')
-                print('clear_alarm OK')
+                if not ghost.set_epoch_n(utili.seconds_since_the_epoch()):
+                    raise utili.Problema('err set_epoch')
+                print('set_epoch OK')
 
                 # if not ghost.goto_CONF():
                 #     raise utili.Problema('err goto_CONF')

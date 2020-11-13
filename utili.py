@@ -4,14 +4,11 @@
     Varie
 """
 
-from __future__ import print_function
-
 import logging
 import threading
 import random
 import string
 import time
-# solo python 3
 import tkinter.filedialog as dialogo
 
 
@@ -454,6 +451,9 @@ class LOGGA:
         else:
             self.logger = logging.getLogger(logger)
 
+    def abilitato(self):
+        return self.logger is not None
+
     def debug(self, msg):
         if self.logger is not None:
             self.logger.debug(msg)
@@ -500,6 +500,22 @@ def girino(x):
         print('\b. ', end='', flush=True)
     else:
         print('\b' + _girino[x % len(_girino)], end='', flush=True)
+
+
+def seconds_since_the_epoch():
+    return int(time.time())
+
+
+def brokendown_time(epoch):
+    bdt = time.gmtime(epoch)
+    return {
+        'anno': bdt.tm_year,
+        'mese': bdt.tm_mon,
+        'giorno': bdt.tm_mday,
+        'ora': bdt.tm_hour,
+        'minuti': bdt.tm_min,
+        'secondi': bdt.tm_sec
+    }
 
 
 if __name__ == '__main__':
