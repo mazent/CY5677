@@ -9,6 +9,7 @@ import threading
 import random
 import string
 import time
+# solo python 3
 import tkinter.filedialog as dialogo
 
 
@@ -87,6 +88,47 @@ def validaCampo(x, mini=None, maxi=None):
 
     return esito, val
 
+def validaFloat(x, mini=None, maxi=None):
+    """
+        Se la stringa x e' un float, controlla
+        che sia tra i due estremi inclusi
+    """
+    esito = False
+    val = None
+    while True:
+        if x is None:
+            break
+
+        if any(x) == 0:
+            break
+
+        try:
+            val = float(x)
+        except ValueError:
+            pass
+
+        if val is None:
+            break
+
+        # Entro i limiti?
+        if mini is None:
+            pass
+        elif val < mini:
+            break
+        else:
+            pass
+
+        if maxi is None:
+            pass
+        elif val > maxi:
+            break
+        else:
+            pass
+
+        esito = True
+        break
+
+    return esito, val
 
 def strVer(vn):
     """

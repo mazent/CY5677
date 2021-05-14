@@ -201,6 +201,8 @@ class CY567x(threading.Thread):
     Cmd_Get_Bluetooth_Device_Address_Api = 0xFE82
     Cmd_Get_Scan_Parameters_Api = 0xFE8A
     Cmd_Set_Scan_Parameters_Api = 0xFE8B
+    Cmd_Set_Connection_Parameters_Api = GAP_GROUP + 9
+    Cmd_Get_Connection_Parameters_Api = GAP_GROUP + 8
     Cmd_Start_Scan_Api = 0xFE93
     Cmd_Stop_Scan_Api = 0xFE94
     Cmd_Set_Local_Device_Security_Api = 0xFE8D
@@ -285,6 +287,7 @@ class CY567x(threading.Thread):
             self._evt_gattc_read_rsp,
             cc.EVT_GET_SCAN_PARAMETERS_RESPONSE:
             self._evt_get_scan_parameters_response,
+            cc.EVT_GET_CONNECTION_PARAMETERS_RESPONSE: self._evt_get_connection_parameters_response,
             cc.EVT_GET_TX_POWER_RESPONSE:
             self._evt_get_tx_power_response,
             cc.EVT_GET_RSSI_RESPONSE:
@@ -517,6 +520,10 @@ class CY567x(threading.Thread):
         self._print('EVT_SCAN_STOPPED_NOTIFICATION')
 
     def _evt_get_scan_parameters_response(self, prm):
+        cmd = struct.unpack('<H', prm[:2])
+        self._save_data(cmd[0], prm[2:])
+
+    def _evt_get_connection_parameters_response(self, prm):
         cmd = struct.unpack('<H', prm[:2])
         self._save_data(cmd[0], prm[2:])
 
@@ -818,6 +825,74 @@ class CY567x(threading.Thread):
             self.Cmd_Get_Bluetooth_Device_Address_Api, prm=prm)
         if not isinstance(rsp, bool):
             return rsp
+
+        return None
+
+    def set_connection_parameters(self, cp):
+        self._print('set_connection_parameters')
+
+        connIntvMin = int(cp['connIntvMin'] / 1.25)
+        connIntvMax = int(cp['connIntvMax'] / 1.25)
+        supervisionTO = int(cp['supervisionTO'] / 10.0)
+
+        prm = bytearray(struct.pack('<HHB', cp['scanIntv'], cp['scanWindow'], cp['initiatorFilterPolicy']))
+        prm += cp['peerBdAddr']
+        prm += struct.pack(
+            '<BBHHHHHH', cp['peerAddrType'], cp['ownAddrType'], connIntvMin, connIntvMax, cp['connLatency'],
+            supervisionTO, cp['minCeLength'], cp['maxCeLength'])
+
+        return self._send_command_and_wait(
+            self.Cmd_Set_Connection_Parameters_Api, prm=prm)
+
+    def get_connection_parameters(self):
+        """
+        get the parameters currently used
+
+        :return: dict or None
+        """
+        self._print('get_connection_parameters')
+        rsp = self._send_command_and_wait(
+            self.Cmd_Get_Connection_Parameters_Api)
+        if not isinstance(rsp, bool):
+            scanIntv, scanWindow, initiatorFilterPolicy = struct.unpack(
+                '<HHB', rsp[:5])
+            rsp = rsp[5:]
+            peerBdAddr = rsp[:6]
+            rsp = rsp[6:]
+            peerAddrType, ownAddrType, connIntvMin, connIntvMax, connLatency, supervisionTO, minCeLength, maxCeLength = struct.unpack(
+                '<BBHHHHHH', rsp)
+
+            # converto solo quello che uso (per adesso)
+            return {
+                'scanIntv': scanIntv,
+                'scanWindow': scanWindow,
+                'initiatorFilterPolicy': initiatorFilterPolicy,
+                'peerBdAddr': peerBdAddr,
+                'peerAddrType': peerAddrType,
+                'ownAddrType': ownAddrType,
+                'connIntvMin': connIntvMin * 1.25,  # ms
+                'connIntvMax': connIntvMax * 1.25,  # ms
+                'connLatency': connLatency,
+                'supervisionTO': supervisionTO * 10.0,  # ms
+                'minCeLength': minCeLength,
+                'maxCeLength': maxCeLength,
+            }
+
+            # converto tutto
+            # return {
+            #     'scanIntv': scanIntv * 2.5,  # ms
+            #     'scanWindow': scanWindow * 2.5,  # ms
+            #     'initiatorFilterPolicy': desc_fp(initiatorFilterPolicy),
+            #     'peerBdAddr': utili.str_da_mac(peerBdAddr),
+            #     'peerAddrType': desc_at(peerAddrType),
+            #     'ownAddrType': desc_at(ownAddrType),
+            #     'connIntvMin': connIntvMin * 1.25,  # ms
+            #     'connIntvMax': connIntvMax * 1.25,  # ms
+            #     'connLatency': connLatency,
+            #     'supervisionTO': supervisionTO * 10.0,  # ms
+            #     'minCeLength': minCeLength,
+            #     'maxCeLength': maxCeLength,
+            # }
 
         return None
 
