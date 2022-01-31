@@ -36,6 +36,8 @@ def _at_flags(data):
 def _at_manufacturer(data):
     # The first 2 octets contain the Company Identifier Code
     # https://www.bluetooth.com/specifications/assigned-numbers/company-identifiers/
+    if len(data)<2:
+        raise KeyError
     cic = struct.unpack('<H', data[:2])
     return 'manuf', cic[0], data[2:]
 

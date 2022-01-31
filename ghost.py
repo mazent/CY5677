@@ -87,6 +87,19 @@ def service_data_from(numserprod):
     return gsd
 
 
+def dati_cpu(_rsp):
+    giorni, secondi, reset, pon, gupo, ria, sta = struct.unpack('<7I', _rsp)
+    return {
+        'giorni': giorni,
+        'secondi': secondi,
+        'reset': reset,
+        'pon': pon,
+        'gupo': gupo,
+        'ria': ria,
+        'sta': sta
+    }
+
+
 class GHOST_COMMAND:
     """
     collects commands
@@ -167,21 +180,14 @@ class GHOST_NORM(GHOST_COMMAND):
         prm = struct.pack('<I', sse)
         return self.cmd_prm_void(CYBLE_SERVICE_CMD_CHAR_HANDLE, 0xB1, prm)
 
-    def cpu_stat(self):
+    def cpu_stat_n(self):
         """
         various cpu data (mainly for battery management)
         :return: dict
         """
-        rsp = self.cmd_void_rsp(CYBLE_SERVICE_CMD_CHAR_HANDLE, 0x56, dim=20)
+        rsp = self.cmd_void_rsp(CYBLE_SERVICE_CMD_CHAR_HANDLE, 0x56, dim=28)
         if rsp is not None:
-            giorni, secondi, reset, pon, gupo = struct.unpack('<5I', rsp)
-            return {
-                'giorni': giorni,
-                'secondi': secondi,
-                'reset': reset,
-                'pon': pon,
-                'gupo': gupo
-            }
+            return dati_cpu(rsp)
 
         return None
 
@@ -249,6 +255,14 @@ class GHOST_CONF(GHOST_COMMAND):
         """
         return self.cmd_void_void(CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x91, to=to)
 
+    def goto_MAGA(self, to=3):
+        """
+        Set MAGA as the next phase (ghost sa)
+        :param to: timeout
+        :return: bool
+        """
+        return self.cmd_void_void(CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xF5, to=to)
+
     def read_ver(self, to=3):
         """
         send the command to read the version
@@ -270,62 +284,6 @@ class GHOST_CONF(GHOST_COMMAND):
             return sver + '{}.{}'.format(magg, mino)
 
         return None
-
-    # def read_tel(self, to=3):
-    #     """
-    #     send the command to read the phone number that will receive the alarm sms
-    #     :param to: timeout
-    #     :return: string
-    #     """
-    #     rsp = self.cmd_void_rsp(
-    #         CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xF3, to=to)
-    #     if rsp is not None:
-    #         return rsp.decode('ascii')
-    #
-    #     return None
-
-    # def write_tel(self, tel, to=3):
-    #     """
-    #     send the command to write the phone number that will receive the alarm sms
-    #     :param tel: string
-    #     :param to: timeout
-    #     :return: bool
-    #     """
-    #     if tel is None:
-    #         return self.cmd_void_void(
-    #             CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x32, to=to)
-    #
-    #     prm = tel.encode('ascii')
-    #     return self.cmd_prm_void(
-    #         CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x32, prm, to=to)
-
-    # def read_fsms(self, to=3):
-    #     """
-    #     send the command to read the sms format string
-    #     :param to: timeout
-    #     :return: string
-    #     """
-    #     rsp = self.cmd_void_rsp(
-    #         CYBLE_CONFIG_CMD_CHAR_HANDLE, 0xEB, to=to)
-    #     if rsp is not None:
-    #         return rsp.decode('ascii')
-    #
-    #     return None
-
-    # def write_fsms(self, sms_fs, to=3):
-    #     """
-    #     send the command to write the sms format string
-    #     :param sms_fs: string
-    #     :param to: timeout
-    #     :return: bool
-    #     """
-    #     if sms_fs is None:
-    #         return self.cmd_void_void(
-    #             CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x78, to=to)
-    #
-    #     prm = sms_fs.encode('ascii')
-    #     return self.cmd_prm_void(
-    #         CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x78, prm, to=to)
 
     def read_broker(self, to=3):
         """
@@ -435,6 +393,25 @@ class GHOST_CONF(GHOST_COMMAND):
 
         return None
 
+    def cpu_stat_c(self):
+        """
+        various cpu data (mainly for battery management)
+        :return: dict
+        """
+        rsp = self.cmd_void_rsp(CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x56, dim=28)
+        if rsp is not None:
+            return dati_cpu(rsp)
+
+        return None
+
+    def cpu_zero(self, to=3):
+        """
+        reset cpu data
+        :param to: timeout
+        :return: bool
+        """
+        return self.cmd_void_void(CYBLE_CONFIG_CMD_CHAR_HANDLE, 0x4B, to=to)
+
 
 class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
     """
@@ -522,6 +499,9 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
             mio = self.my_address()
             if mio is None:
                 raise utili.Problema('err bdaddr')
+
+            # sp=self.get_scan_parameters()
+            # print(sp)
 
             self.mio = mio
             self.logger.debug('io sono ' + utili.str_da_mac(mio))
@@ -715,7 +695,7 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
         fcrc.update(xxx)
         xxx += fcrc.digest()
 
-        print('comando: ' + utili.esa_da_ba(xxx, ' '))
+        # print('comando: ' + utili.esa_da_ba(xxx, ' '))
 
         return xxx
 
@@ -825,7 +805,7 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
         self.sincro['pairReq'].set()
 
     def gattc_handle_value_ntf_cb(self, crt, ntf):
-        print('ntf crt={:04X}'.format(crt))
+        # print('ntf crt={:04X}'.format(crt))
 
         if self.blc is None:
             self.sincro['rsp'].put_nowait((crt, ntf))
@@ -835,7 +815,7 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
             self.sincro['blr'].put_nowait(ntf)
 
     def gattc_handle_value_ind_cb(self, crt, result, ind):
-        print('ind crt={:04X}'.format(crt))
+        # print('ind crt={:04X}'.format(crt))
         if crt == self.CYBLE_SERVICE_CHANGED_CHAR_HANDLE:
             # rileggere i servizi
             self.sincro['uvs'].set()

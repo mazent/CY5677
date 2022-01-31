@@ -30,25 +30,6 @@ class PROTO:
 
         # protocol state
         self.partial = bytearray()
-        self.stati = {
-            0: self._stato_0,
-            1: self._stato_1,
-            2: self._stato_2
-        }
-        self.stato = 0
-
-
-    def reinit(self, start=False):
-        """
-        Come back to the initial state
-        :return: n.a.
-        """
-        self.partial = bytearray()
-        if start:
-            # the first byte is arrived
-            self.stato = 1
-        else:
-            self.stato = 0
 
     def who_are_you(self):
         """
@@ -67,40 +48,6 @@ class PROTO:
 
         return None
 
-    def _stato_0(self, rx):
-        if rx == self.first:
-            self.stato = 1
-        return False
-
-    def _stato_1(self, rx):
-        if rx == self.second:
-            self.stato = 2
-        else:
-            if len(self.partial):
-                self._print('_stato_1 elimino {}'.format(utili.esa_da_ba(self.partial, '-')))
-            self.reinit()
-        return False
-
-    def _stato_2(self, rx):
-        if rx == self.first:
-            return True
-
-        self.partial.append(rx)
-        return False
-
-    def examine(self, questi):
-        for cosa in questi:
-            if self.stati[self.stato](cosa):
-                self.check_packet(True)
-
-        self.check_packet()
-
-    def check_packet(self, start=False):
-        """
-        message length is in different positions: override this to catch messages
-        :return: n.a.
-        """
-
     def msg_to_string(self, cosa):
         """
         convert the message to a human readable string: override this
@@ -114,8 +61,55 @@ class PROTO_RX(PROTO):
     specialization for messages received from CY5677
     """
 
+    def _stato_0(self, rx):
+        if rx == self.first:
+            self.stato = 1
+
+    def _stato_1(self, rx):
+        if rx == self.second:
+            self.stato = 2
+        else:
+            if len(self.partial):
+                self._print(
+                    '_stato_1 elimino {}'.format(
+                        utili.esa_da_ba(
+                            self.partial, '-')))
+            self.reinit()
+
+    def _stato_2(self, rx):
+        self.partial.append(rx)
+        if len(self.partial) == 2:
+            self.dim = 2 + struct.unpack('<H', self.partial)[0]
+            self.stato = 3
+
+    def _stato_3(self, rx):
+        self.partial.append(rx)
+        if len(self.partial) == self.dim:
+            self.dim = -1
+            self.check_packet(False)
+
     def __init__(self):
         PROTO.__init__(self, 'RX', 0xBD, 0xA7)
+        self.dim = -1
+        self.stati = {
+            0: self._stato_0,
+            1: self._stato_1,
+            2: self._stato_2,
+            3: self._stato_3
+        }
+        self.stato = 0
+
+    def reinit(self, start=False):
+        """
+        Come back to the initial state
+        :return: n.a.
+        """
+        self.partial = bytearray()
+        if start:
+            # the first byte is arrived
+            self.stato = 1
+        else:
+            self.stato = 0
 
     def check_packet(self, start=False):
         def empty_partial():
@@ -139,6 +133,12 @@ class PROTO_RX(PROTO):
                 pass
         elif start:
             empty_partial()
+
+    def examine(self, questi):
+        for cosa in questi:
+            self.stati[self.stato](cosa)
+
+        self.check_packet()
 
     def decompose(self, cosa):
         """
@@ -198,19 +198,6 @@ class PROTO_TX(PROTO):
 
     def __init__(self):
         PROTO.__init__(self, 'TX', 0x43, 0x59)
-
-    def check_packet(self, start=False):
-        if len(self.partial) >= 4:
-            _, tot = struct.unpack('<2H', self.partial[:4])
-            tot += 4
-
-            if tot == len(self.partial):
-                # got it!
-                self.msg_list.append(bytearray(self.partial))
-
-                self.reinit(start)
-            else:
-                pass
 
     def msg_to_string(self, cosa):
         risul = self.name + ' '

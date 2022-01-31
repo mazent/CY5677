@@ -9,6 +9,12 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from cryptography.hazmat.primitives.ciphers.aead import AESCCM
 
+# prove con iv alternati
+# giv = None
+# giv1 = None
+# giv2 = None
+# import utili
+
 
 class PRIVACY:
     """
@@ -83,6 +89,24 @@ class PRIVACY:
 
         # an handful of random bytes
         iv = bytearray(secrets.token_bytes(16))
+        # troppi zeri
+        # iv = bytearray([0] * 16)
+        # fallisce dalla seconda volta (stesso v)
+        # iv = bytearray([0] * 8)+bytearray([255] * 8)
+        # fallisce dalla terza volta (alternanza)
+        # global giv, giv1, giv2
+        # iv = None
+        # if giv is None:
+        #     giv1 = bytearray(secrets.token_bytes(16))
+        #     giv2 = bytearray(secrets.token_bytes(16))
+        #     giv = giv1
+        # if giv is giv1:
+        #     iv = giv2
+        #     giv = giv2
+        # else:
+        #     iv = giv1
+        #     giv = giv1
+        # print('IV = ' + utili.esa_da_ba(iv, ' '))
 
         # compute and save last block length
         dub = len(cosa) & 0x0F
