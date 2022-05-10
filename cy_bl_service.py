@@ -53,7 +53,9 @@ class CY_BL_SERVICE:
 
     def __init__(self):
         self.blc = None
-        self.sincro = {}
+
+        # cypress bootloader service
+        self.sincro['blr'] = queue.Queue()
 
     def _bl_pkt_trail(self, pkt):
         return struct.pack('<HB', _bl_csum(pkt), self.EOP)

@@ -11,7 +11,7 @@ import string
 import time
 # solo python 3
 import tkinter.filedialog as dialogo
-
+import inspect
 
 
 def validaStringa(x, dimmin=None, dimmax=None):
@@ -260,6 +260,10 @@ class Problema(Exception):
         Exception.__init__(self)
         self.msg = msg
 
+        # recupero la posizione del chiamante
+        fi = inspect.getframeinfo(inspect.currentframe().f_back)
+        self.pos = fi.filename + ': ' + str(fi.lineno)
+
     def __str__(self):
         return self.msg
 
@@ -486,6 +490,13 @@ class CRONOMETRO():
         return self.tempo() - self.inizio
 
 class LOGGA:
+    # Lo script principale inizializza, p.e.:
+    #     logging.basicConfig(
+    #         filename='pippo.txt',
+    #         level=logging.DEBUG,
+    #         format='%(asctime)s - %(levelname)s - %(message)s')
+    #     logging.getLogger().addHandler(logging.StreamHandler())
+    # Tutti istanziano questa classe e usano i suoi metodi
 
     def __init__(self, logger=None):
         if logger is None:
@@ -496,8 +507,12 @@ class LOGGA:
     def abilitato(self):
         return self.logger is not None
 
-    def debug(self, msg):
+    # in ordine di verbosita'
+
+    def debug(self, msg, ba=None):
         if self.logger is not None:
+            if ba is not None:
+                msg = msg + ' [{}]:'.format(len(ba)) + stringa_da_ba(ba, ' ')
             self.logger.debug(msg)
 
     def info(self, msg):
@@ -510,10 +525,22 @@ class LOGGA:
 
     def error(self, msg):
         if self.logger is not None:
+            # recupero la posizione del chiamante
+            fi = inspect.getframeinfo(inspect.currentframe().f_back)
+
+            # e la appiccico in fondo
+            msg = msg + ' <' + fi.filename + ': ' + str(fi.lineno) + '>'
+
             self.logger.error(msg)
 
     def critical(self, msg):
         if self.logger is not None:
+            # recupero la posizione del chiamante
+            fi = inspect.getframeinfo(inspect.currentframe().f_back)
+
+            # e la appiccico in fondo
+            msg = msg + ' <' + fi.filename + ': ' + str(fi.lineno) + '>'
+
             self.logger.critical(msg)
 
 def scegli_file_esistente(master, filetypes):
