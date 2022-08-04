@@ -31,35 +31,14 @@ class PROTO:
         # protocol state
         self.partial = bytearray()
 
-    def who_are_you(self):
-        """
-        Make an educated guess
-        :return: the name
-        """
-        return self.name
-
-    def get_msg(self):
-        """
-        retrieve a message if present
-        :return: a bytearray or None
-        """
-        if any(self.msg_list):
-            return self.msg_list.pop(0)
-
-        return None
-
-    def msg_to_string(self, cosa):
-        """
-        convert the message to a human readable string: override this
-        :param cosa: message
-        :return: string
-        """
-
-
-class PROTO_RX(PROTO):
-    """
-    specialization for messages received from CY5677
-    """
+        self.dim = -1
+        self.stati = {
+            0: self._stato_0,
+            1: self._stato_1,
+            2: self._stato_2,
+            3: self._stato_3
+        }
+        self.stato = 0
 
     def _stato_0(self, rx):
         if rx == self.first:
@@ -88,17 +67,35 @@ class PROTO_RX(PROTO):
             self.dim = -1
             self.check_packet(False)
 
-    def __init__(self):
-        PROTO.__init__(self, 'RX', 0xBD, 0xA7)
-        self.dim = -1
-        self.stati = {
-            0: self._stato_0,
-            1: self._stato_1,
-            2: self._stato_2,
-            3: self._stato_3
-        }
-        self.stato = 0
+    def _dim_pkt(self):
+        tot, _ = struct.unpack('<2H', self.partial[:4])
+        return tot + 2
 
+    def who_are_you(self):
+        """
+        Make an educated guess
+        :return: the name
+        """
+        return self.name
+
+    def get_msg(self):
+        """
+        retrieve a message if present
+        :return: a bytearray or None
+        """
+        if any(self.msg_list):
+            return self.msg_list.pop(0)
+
+        return None
+
+    def msg_to_string(self, cosa):
+        """
+        convert the message to a human readable string: override this
+        :param cosa: message
+        :return: string
+        """
+
+    # Packet analysis
     def reinit(self, start=False):
         """
         Come back to the initial state
@@ -119,9 +116,7 @@ class PROTO_RX(PROTO):
                 self.reinit(True)
 
         if len(self.partial) >= 4:
-            tot, _ = struct.unpack('<2H', self.partial[:4])
-            tot += 2
-
+            tot = self._dim_pkt()
             if tot == len(self.partial):
                 # got it!
                 self.msg_list.append(bytearray(self.partial))
@@ -134,11 +129,22 @@ class PROTO_RX(PROTO):
         elif start:
             empty_partial()
 
+
     def examine(self, questi):
         for cosa in questi:
             self.stati[self.stato](cosa)
 
         self.check_packet()
+
+
+class PROTO_RX(PROTO):
+    """
+    specialization for messages received from CY5677
+    """
+
+
+    def __init__(self):
+        PROTO.__init__(self, 'RX', 0xBD, 0xA7)
 
     def decompose(self, cosa):
         """
@@ -198,6 +204,24 @@ class PROTO_TX(PROTO):
 
     def __init__(self):
         PROTO.__init__(self, 'TX', 0x43, 0x59)
+
+    def _stato_2(self, rx):
+        self.partial.append(rx)
+        if len(self.partial) == 2:
+            self.stato = 3
+
+    def _stato_3(self, rx):
+        self.partial.append(rx)
+        if len(self.partial) == 4:
+            self.dim = struct.unpack('<H', self.partial[2:])[0]
+        elif len(self.partial) == self.dim:
+            self.dim = -1
+            self.check_packet(False)
+
+    def _dim_pkt(self):
+        _, tot = struct.unpack('<2H', self.partial[:4])
+        return tot + 4
+
 
     def msg_to_string(self, cosa):
         risul = self.name + ' '

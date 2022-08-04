@@ -105,4 +105,4 @@ if __name__ == '__main__':
                 stampa(elem, usc, cy_rx, cy_tx)
 
     else:
-        print('Passare il file di AccessPort')
+        print('Passare il file del diario')
