@@ -360,20 +360,22 @@ class CY567x(threading.Thread):
         cmd, status = struct.unpack('<2H', prm)
         self.diario.debug('EVT_COMMAND_STATUS: cmd={:04X} stt={}'.format(
             cmd, status))
-        if cmd in (self.Cmd_Start_Scan_Api,
-                   self.Cmd_Initiate_Pairing_Request_Api):
+        # if cmd in (self.Cmd_Start_Scan_Api,
+        #            self.Cmd_Initiate_Pairing_Request_Api):
+        if cmd == self.Cmd_Start_Scan_Api:
             self._close_command(cmd, status)
 
     def _evt_command_complete(self, prm):
         cmd, status = struct.unpack('<2H', prm)
         self.diario.debug('EVT_COMMAND_COMPLETE: cmd={:04X} stt={}'.format(
             cmd, status))
-        if cmd == self.Cmd_Initiate_Pairing_Request_Api:
-            # the command was closed by _evt_command_status: now we must tell
-            # that the procedure was successfull
-            self.gap_auth_resul_cb(0)
-        else:
             self._close_command(cmd, status)
+        # if cmd == self.Cmd_Initiate_Pairing_Request_Api:
+        #     # the command was closed by _evt_command_status: now we must tell
+        #     # that the procedure was successfull
+        #     self.gap_auth_resul_cb(0)
+        # else:
+        #     self._close_command(cmd, status)
 
     def _evt_scan_progress_result(self, prm):
         _ = struct.unpack('<H', prm[:2])
@@ -1033,9 +1035,9 @@ class CY567x(threading.Thread):
 
     def connect_pk(self, bda: str, pk: str, public=True, to=20) -> bool:
         """
-        connect to the device requesting pairing with a passkey
+        connect to a device that will request pairing (legacy passkey or just works)
         :param bda: mac address
-        :param pk: passkey (0..999999)
+        :param pk: passkey (0..999999) or  'JUST_WORKS'
         :return: bool
         """
         try:
@@ -1051,11 +1053,12 @@ class CY567x(threading.Thread):
             if not self.initiate_pairing_request():
                 raise utili.Problema('err pair req')
 
-            if not self.sincro['passkeyReq'].wait(to):
-                raise utili.Problema("err passkeyReq")
-
-            if not self.pairing_passkey(int(pk)):
-                raise utili.Problema('err pairing_passkey')
+            if pk != 'JUST_WORKS':
+	            if not self.sincro['passkeyReq'].wait(to):
+	                raise utili.Problema("err passkeyReq")
+	
+	            if not self.pairing_passkey(int(pk)):
+	                raise utili.Problema('err pairing_passkey')
 
             return True
 
