@@ -310,7 +310,7 @@ class CY567x(threading.Thread):
             # signaled by gap_auth_req_cb
             'authReq': threading.Event(),
             # signaled by gap_passkey_entry_request_cb
-            'pairReq': threading.Event(),
+            'passkeyReq': threading.Event(),
         }
 
         try:
@@ -444,10 +444,10 @@ class CY567x(threading.Thread):
         00 	  authErr
         00	  pairingProperties
         """
-        _, reason, _, _, _, authErr, _ = struct.unpack('<H6B', prm)
+        _, reason, security, bonding, ekeySize, authErr, pairingProperties = struct.unpack('<H6B', prm)
         self.diario.debug(
-            'EVT_NEGOTIATED_PAIRING_PARAMETERS: reason={} authErr={}'.format(
-                reason, authErr))
+            'EVT_NEGOTIATED_PAIRING_PARAMETERS: reason={} security={} bonding={} ekeySize={} authErr={} pairingProperties={}'.format(
+                reason, security, bonding, ekeySize, authErr, pairingProperties))
 
     def _evt_gap_passkey_entry_request(self, _):
         """
@@ -497,8 +497,22 @@ class CY567x(threading.Thread):
         """
         event, dim = struct.unpack('<2H', prm[:4])
         prm = prm[4:]
-        self.diario.debug('EVT_REPORT_STACK_MISC_STATUS: CYBLE_EVT_={:04X}[{}] '.
-                          format(event, dim) + utili.stringa_da_ba(prm, ' '))
+        if event == 0x0029 and len(prm) == 1:
+            x = '?'
+            if prm[0] == 0:
+                x = 'Encryption OFF'
+            elif prm[0] == 1:
+                x = 'Encryption ON'
+            self.diario.debug(
+                'EVT_REPORT_STACK_MISC_STATUS: CYBLE_EVT_GAP_ENCRYPT_CHANGE ' + x)
+        elif event == 0x002C:
+            self.diario.debug(
+                'EVT_REPORT_STACK_MISC_STATUS: CYBLE_EVT_GAP_KEYINFO_EXCHNGE_CMPLT ' +
+                utili.stringa_da_ba(prm, ' '))
+        else:
+            self.diario.debug(
+                'EVT_REPORT_STACK_MISC_STATUS: CYBLE_EVT_={:04X}[{}] '.format(event, dim) +
+                utili.stringa_da_ba(prm, ' '))
 
     def _evt_gattc_handle_value_ntf(self, prm):
         # connHandle, attrHandle, len
@@ -1019,35 +1033,34 @@ class CY567x(threading.Thread):
 
     def connect_pk(self, bda: str, pk: str, public=True, to=20) -> bool:
         """
-        connect to the device with a passkey
+        connect to the device requesting pairing with a passkey
         :param bda: mac address
         :param pk: passkey (0..999999)
         :return: bool
         """
         try:
             self.sincro['authReq'].clear()
-            self.sincro['pairReq'].clear()
+            self.sincro['passkeyReq'].clear()
 
             if not self.connect(bda, public):
                 raise utili.Problema('Connessione: ERRORE')
 
-            # authentication
             if not self.sincro['authReq'].wait(to):
                 raise utili.Problema("err autReq")
 
             if not self.initiate_pairing_request():
                 raise utili.Problema('err pair req')
 
-            if not self.sincro['pairReq'].wait(to):
-                raise utili.Problema("err pairReq")
+            if not self.sincro['passkeyReq'].wait(to):
+                raise utili.Problema("err passkeyReq")
 
             if not self.pairing_passkey(int(pk)):
-                raise utili.Problema('err passkey')
+                raise utili.Problema('err pairing_passkey')
 
             return True
 
         except utili.Problema as err:
-            self.logger.error(str(err))
+            self.diario.error(str(err))
             return False
 
     def disconnect(self):
@@ -1464,7 +1477,7 @@ class CY567x(threading.Thread):
         :return: n.a.
         """
         self.diario.debug('gap_passkey_entry_request_cb')
-        self.sincro['pairReq'].set()
+        self.sincro['passkeyReq'].set()
 
     def gap_auth_resul_cb(self, reason):
         """
