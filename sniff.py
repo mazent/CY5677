@@ -5,6 +5,16 @@ from cyproto import PROTO_RX, PROTO_TX
 
 
 def leggi_dati(riga):
+    # inizia con: "2022-08-05 09:59:06,027 - ..."
+    pos = riga.find(' ')
+    if pos == -1:
+        return None
+    pos = riga.find('-', pos)
+    if pos == -1:
+        return None
+    quando = riga[:pos]
+    quando = quando.rstrip(' \t\r\n')
+
     pos = riga.find('Data:')
     if pos == -1:
         return None
@@ -13,7 +23,7 @@ def leggi_dati(riga):
     riga = riga[pos:]
     riga = riga.rstrip(' \t\r\n')
 
-    return utili.ba_da_esa(riga, ' ')
+    return quando, utili.ba_da_esa(riga, ' ')
 
 
 def stampa(cosa, dove, proto_rx, proto_tx):
@@ -29,12 +39,25 @@ def stampa(cosa, dove, proto_rx, proto_tx):
         dove.write('CLOSE\n')
         return
 
-    if cosa[0] == 'w':
-        dove.write(proto_tx.msg_to_string(cosa[1]))
-    else:
-        dove.write(proto_rx.msg_to_string(cosa[1]))
+    if 'w' in cosa[0]:
+        pos = cosa[0].find('w')
+        quando = cosa[0][:pos]
 
-    dove.write('\n')
+        dove.write(quando)
+        dove.write(proto_tx.msg_to_string(cosa[1]))
+        dove.write('\n')
+        return
+
+    if 'r' in cosa[0]:
+        pos = cosa[0].find('r')
+        quando = cosa[0][:pos]
+
+        dove.write(quando)
+        dove.write(proto_rx.msg_to_string(cosa[1]))
+        dove.write('\n')
+        return
+
+    dove.write('???\n')
 
 
 def estrai(oper, proto, lista):
@@ -56,16 +79,20 @@ def leggi_ingresso(nfile, proto_rx, proto_tx):
 
             if 'IRP_MJ_WRITE' in riga:
                 dati = leggi_dati(riga)
+                if dati is None:
+                    continue
 
-                proto_tx.examine(dati)
-                estrai('w', proto_tx, lista_op)
+                proto_tx.examine(dati[1])
+                estrai(dati[0] + ' w', proto_tx, lista_op, )
                 continue
 
             if 'IRP_MJ_READ' in riga:
                 dati = leggi_dati(riga)
-                if dati is not None:
-                    proto_rx.examine(dati)
-                    estrai('r', proto_rx, lista_op)
+                if dati is None:
+                    continue
+
+                proto_rx.examine(dati[1])
+                estrai(dati[0] + ' r', proto_rx, lista_op)
                 continue
 
             if 'IRP_MJ_CREATE' in riga:
@@ -91,7 +118,7 @@ def leggi_ingresso(nfile, proto_rx, proto_tx):
 if __name__ == '__main__':
     if len(sys.argv) == 2:
         nomeing = sys.argv[1]
-        nomeusc = nomeing + '.msg'
+        nomeusc = nomeing + '.txrx'
 
         cy_rx = PROTO_RX()
         cy_tx = PROTO_TX()
