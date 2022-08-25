@@ -16,7 +16,7 @@ def scan_report(data):
     """
     sr = {
         'adv_type': _ADVERTISEMENT_EVENT_TYPE[data[0]],
-        'bda': utili.str_da_mac(data[1:7])
+        'bda': utili.stringa_da_mac(data[1:7])
     }
 
     bda_type, rssi, dim = struct.unpack('<BbB', data[7:10])
@@ -36,7 +36,7 @@ def _at_flags(data):
 def _at_manufacturer(data):
     # The first 2 octets contain the Company Identifier Code
     # https://www.bluetooth.com/specifications/assigned-numbers/company-identifiers/
-    if len(data)<2:
+    if len(data) < 2:
         raise KeyError
     cic = struct.unpack('<H', data[:2])
     return 'manuf', cic[0], data[2:]
@@ -89,6 +89,7 @@ def _at_service_class_uuid32(data):
         data = data[4:]
     return 'srv32', lista
 
+
 def _at_service_class_uuid128(data):
     lista = []
     while len(data) >= 16:
@@ -115,17 +116,17 @@ def scan_advertise(data):
         # structure length
         slen = data.pop(0)
         if slen:
-	        # structure data
-	        sdata = data[:slen]
-	        # next structures
-	        data = data[slen:]
-	
-	        # structure type
-	        stype = sdata.pop(0)
-	        try:
-	            adv.append(_ADV_TYPE[stype](sdata))
-	        except KeyError:
-	            adv.append(('???', stype, sdata))
+            # structure data
+            sdata = data[:slen]
+            # next structures
+            data = data[slen:]
+
+            # structure type
+            stype = sdata.pop(0)
+            try:
+                adv.append(_ADV_TYPE[stype](sdata))
+            except KeyError:
+                adv.append(('???', stype, sdata))
     return adv
 
 

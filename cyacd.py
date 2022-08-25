@@ -83,16 +83,16 @@ class CYACD:
         }
 
     def load(self, filename):
-        with open(filename, 'rt') as ing:
+        with open(filename, 'rt') as fing:
             self.nf = filename
 
             # first row
-            ur = ing.readline()
+            ur = fing.readline()
             ba = _bytes_from_char(ur)
             self._CyBtldr_ParseHeader(ba)
 
             while True:
-                ur = ing.readline()
+                ur = fing.readline()
                 if not any(ur):
                     break
 
@@ -112,7 +112,6 @@ class CYACD:
 
 
 if __name__ == '__main__':
-    import sys
     import utili
     import crcmod
     import random
@@ -121,7 +120,7 @@ if __name__ == '__main__':
     from cryptography.hazmat.backends import default_backend
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     import argparse
-    import proto
+    import cyproto
 
     DESCRIZIONE = \
         '''
@@ -163,16 +162,16 @@ if __name__ == '__main__':
     ROW_MSK = 0x1FF
 
 
-    class BINARIO(proto.PROTO):
+    class BINARIO(cyproto.PROTO):
         def __init__(self):
-            proto.PROTO.__init__(self, INIZ, FINE, FUGA)
+            cyproto.PROTO.__init__(self, INIZ, FINE, FUGA)
             self.iv = None
             self.h = HASH()
             self.rc = None
 
         def pkt_cb(self, msg):
             if len(msg) < 2 + 2:
-                print('ERR pochi byte: ' + utili.esa_da_ba(msg, ' '))
+                print('ERR pochi byte: ' + utili.stringa_da_ba(msg, ' '))
                 return
 
             testa = struct.unpack('<H', msg[:2])[0]
@@ -192,16 +191,16 @@ if __name__ == '__main__':
                         sid, rev = struct.unpack('<IB', msg)
                         print('SILICON {:08X}.{:02X}'.format(sid, rev))
                     else:
-                        print('ERR: sil pochi byte: ' + utili.esa_da_ba(msg, ' '))
+                        print('ERR: sil pochi byte: ' + utili.stringa_da_ba(msg, ' '))
                 elif tipo == T_IV:
                     if len(msg) == 16:
                         if self.rc is None:
                             self.rc = RIGA_CIF(bytes(msg))
-                            print('IV: ' + utili.esa_da_ba(msg, ' '))
+                            print('IV: ' + utili.stringa_da_ba(msg, ' '))
                         else:
-                            print('ERR: iv doppione: ' + utili.esa_da_ba(msg, ' '))
+                            print('ERR: iv doppione: ' + utili.stringa_da_ba(msg, ' '))
                     else:
-                        print('ERR: iv pochi byte: ' + utili.esa_da_ba(msg, ' '))
+                        print('ERR: iv pochi byte: ' + utili.stringa_da_ba(msg, ' '))
                 elif tipo == T_RIGA:
                     aid = (testa >> AID_POS) & AID_MSK
                     row = testa & ROW_MSK
@@ -209,33 +208,37 @@ if __name__ == '__main__':
                         if self.rc is None:
                             # Riga in chiaro
                             self.h.riga(msg)
-                            print('RIGA[{}][{}]: '.format(aid, row) + utili.esa_da_ba(msg, ' '))
+                            print('RIGA[{}][{}]: '.format(aid, row) + utili.stringa_da_ba(msg, ' '))
                         else:
                             # Riga cifrata
                             dec = self.rc.decifra(msg)
                             self.h.riga(dec)
-                            print('RIGA[{}][{}]: '.format(aid, row) + utili.esa_da_ba(dec, ' '))
+                            print('RIGA[{}][{}]: '.format(aid, row) + utili.stringa_da_ba(dec, ' '))
                     else:
-                        print('ERR: riga pochi byte: ' + utili.esa_da_ba(msg, ' '))
+                        print('ERR: riga pochi byte: ' + utili.stringa_da_ba(msg, ' '))
                 elif tipo == T_SHA:
                     if len(msg) == 32:
-                        print('SHA(bin): ' + utili.esa_da_ba(msg, ' '))
+                        print('SHA(bin): ' + utili.stringa_da_ba(msg, ' '))
                         mio = self.h.riassunto()
-                        print('SHA(mio): ' + utili.esa_da_ba(mio, ' '))
+                        print('SHA(mio): ' + utili.stringa_da_ba(mio, ' '))
                         if mio == msg:
                             print('BIN valido')
                         else:
                             print('BIN NON VALIDO')
                     else:
-                        print('ERR: sha pochi byte: ' + utili.esa_da_ba(msg, ' '))
+                        print('ERR: sha pochi byte: ' + utili.stringa_da_ba(msg, ' '))
                 else:
                     print('ERR tipo {} testa {:04X}'.format(tipo, testa))
             else:
                 print('ERR crc')
 
-        def err_cb(self, desc):
-            print(desc)
-            return False
+        def esamina(self, roba: bytearray):
+            # da fare
+            pass
+
+        # def err_cb(self, desc):
+        #     print(desc)
+        #     return False
 
 
     def intestazione(tipo, aid=None, row=None):
@@ -468,11 +471,11 @@ if __name__ == '__main__':
             return chiaro
 
 
-    def stampa(cyacd):
+    def stampa(_cyacd):
         # stampa a video il contenuto
         # h = [0] * 256
 
-        for riga in cyacd.rows:
+        for riga in _cyacd.rows:
             arrayId = riga['arrayId']
             rowNum = riga['rowNum']
             # checksum = riga['checksum']
@@ -485,22 +488,22 @@ if __name__ == '__main__':
                     arrayId,
                     rowNum,
                     len(row),
-                    utili.esa_da_ba(row, ' ')))
+                    utili.stringa_da_ba(row, ' ')))
 
         # istogramma
         # for i in range(256):
         #     print('{} = {:02X}'.format(h[i], i))
 
 
-    def conversione_1(cyacd):
+    def conversione_1(_cyacd):
         # non usa SHA e non cifra le righe
-        nfb = cyacd.nomefile() + ".1.bin"
+        nfb = _cyacd.nomefile() + ".1.bin"
 
         with open(nfb, 'wb') as usc:
-            s = SILICON(cyacd.sil_id, cyacd.sil_rev)
+            s = SILICON(_cyacd.sil_id, _cyacd.sil_rev)
             usc.write(s.elem())
 
-            for riga in cyacd.rows:
+            for riga in _cyacd.rows:
                 arrayId = riga['arrayId']
                 rowNum = riga['rowNum']
                 row = riga['row']
@@ -509,16 +512,16 @@ if __name__ == '__main__':
                 usc.write(r.elem())
 
 
-    def conversione_2(cyacd):
+    def conversione_2(_cyacd):
         # usa sha ma non cifra le righe
-        nfb = cyacd.nomefile() + ".2.bin"
+        nfb = _cyacd.nomefile() + ".2.bin"
 
         h = HASH()
         with open(nfb, 'wb') as usc:
-            s = SILICON(cyacd.sil_id, cyacd.sil_rev)
+            s = SILICON(_cyacd.sil_id, _cyacd.sil_rev)
             usc.write(s.elem())
 
-            for riga in cyacd.rows:
+            for riga in _cyacd.rows:
                 arrayId = riga['arrayId']
                 rowNum = riga['rowNum']
                 row = riga['row']
@@ -531,13 +534,13 @@ if __name__ == '__main__':
             usc.write(h.elem())
 
 
-    def conversione_3(cyacd):
+    def conversione_3(_cyacd):
         # sha + cifra le righe
-        nfb = cyacd.nomefile() + ".3.bin"
+        nfb = _cyacd.nomefile() + ".3.bin"
 
         h = HASH()
         with open(nfb, 'wb') as usc:
-            s = SILICON(cyacd.sil_id, cyacd.sil_rev)
+            s = SILICON(_cyacd.sil_id, _cyacd.sil_rev)
             usc.write(s.elem())
 
             iv = IV()
@@ -545,7 +548,7 @@ if __name__ == '__main__':
 
             rc = RIGA_CIF(iv.dammelo())
 
-            for riga in cyacd.rows:
+            for riga in _cyacd.rows:
                 arrayId = riga['arrayId']
                 rowNum = riga['rowNum']
                 row = riga['row']
@@ -560,13 +563,13 @@ if __name__ == '__main__':
     FUNZ = [stampa, conversione_1, conversione_2, conversione_3]
 
     if arghi.leggi:
-        bin = None
+        binario = None
         with open(arghi.nf, 'rb') as ing:
-            bin = ing.read()
+            binario = ing.read()
 
-        if bin is not None:
+        if binario is not None:
             fb = BINARIO()
-            fb.esamina(bin)
+            fb.esamina(binario)
     else:
         if arghi.tipo in (0, 1, 2, 3):
             funz = FUNZ[arghi.tipo]

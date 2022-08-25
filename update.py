@@ -60,7 +60,7 @@ class EXAMPLE(CY567x.CY567x):
                 raise utili.Problema('err bdaddr')
 
             self.mio = mio
-            print('io sono ' + utili.str_da_mac(mio))
+            print('io sono ' + utili.stringa_da_mac(mio))
         except utili.Problema as err:
             print(err)
 

@@ -23,7 +23,7 @@ def leggi_dati(riga):
     riga = riga[pos:]
     riga = riga.rstrip(' \t\r\n')
 
-    return quando, utili.ba_da_esa(riga, ' ')
+    return quando, utili.ba_da_stringa(riga, ' ')
 
 
 def stampa(cosa, dove, proto_rx, proto_tx):

@@ -504,7 +504,7 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
             # print(sp)
 
             self.mio = mio
-            self.logger.debug('io sono ' + utili.str_da_mac(mio))
+            self.logger.debug('io sono ' + utili.stringa_da_mac(mio))
         except utili.Problema as err:
             self.logger.critical(str(err))
 
@@ -575,7 +575,7 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
         """
 
         sdata = service_data_from(cp)
-        self.logger.info('find <' + cp + '> => ' + utili.esa_da_ba(sdata, ' '))
+        self.logger.info('find <' + cp + '> => ' + utili.stringa_da_ba(sdata, ' '))
 
         self.srvdata = sdata
 
@@ -601,7 +601,7 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
         :return: integer
         """
         self.priv = prv.PRIVACY(secret)
-        x = self.priv.hash(utili.mac_da_str(bda))
+        x = self.priv.hash(utili.mac_da_stringa(bda))
         pqb = struct.unpack('<I', x[:4])
         return pqb[0] % 1000000
 
@@ -695,7 +695,7 @@ class GHOST(CY567x.CY567x, GHOST_CONF, GHOST_NORM, bl.CY_BL_SERVICE):
         fcrc.update(xxx)
         xxx += fcrc.digest()
 
-        # print('comando: ' + utili.esa_da_ba(xxx, ' '))
+        # print('comando: ' + utili.stringa_da_ba(xxx, ' '))
 
         return xxx
 
@@ -837,7 +837,7 @@ if __name__ == '__main__':
     FAKE_PRD = 'TD3py239168'
 
     sd = service_data_from(FAKE_PRD)
-    print(utili.esa_da_ba(sd, ' '))
+    print(utili.stringa_da_ba(sd, ' '))
     nsp = nsp_from(sd)
     print(nsp)
     print(FAKE_PRD == nsp)

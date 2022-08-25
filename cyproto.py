@@ -51,7 +51,7 @@ class PROTO:
             if len(self.partial):
                 self._print(
                     '_stato_1 elimino {}'.format(
-                        utili.esa_da_ba(
+                        utili.stringa_da_ba(
                             self.partial, '-')))
             self.reinit()
 
@@ -112,7 +112,7 @@ class PROTO:
         def empty_partial():
             # a new packet starts
             if len(self.partial):
-                self._print('scarto ' + utili.esa_da_ba(self.partial, '-'))
+                self._print('scarto ' + utili.stringa_da_ba(self.partial, '-'))
                 self.reinit(True)
 
         if len(self.partial) >= 4:
@@ -161,7 +161,7 @@ class PROTO_RX(PROTO):
             if tot != len(prm):
                 self._print(self.name +
                             ' ERR DIM {:04X}[{} != {}]: '.format(evn, tot, len(
-                                prm)) + utili.esa_da_ba(prm, ' '))
+                                prm)) + utili.stringa_da_ba(prm, ' '))
             else:
                 msg['evn'] = evn
                 msg['prm'] = prm
@@ -169,9 +169,9 @@ class PROTO_RX(PROTO):
                 self._print(
                     self.name +
                     ' {:04X}[{}]: '.format(evn, tot) +
-                    utili.esa_da_ba(prm, ' '))
+                    utili.stringa_da_ba(prm, ' '))
         else:
-            self._print(self.name + ' ????: ' + utili.esa_da_ba(cosa, ' '))
+            self._print(self.name + ' ????: ' + utili.stringa_da_ba(cosa, ' '))
         return msg
 
     def msg_to_string(self, cosa):
@@ -185,12 +185,12 @@ class PROTO_RX(PROTO):
 
             if tot != len(prm):
                 risul += 'ERR DIM [{} != {}]: '.format(
-                    tot, len(prm)) + '\n\t' + utili.esa_da_ba(prm, ' ')
+                    tot, len(prm)) + '\n\t' + utili.stringa_da_ba(prm, ' ')
             else:
                 risul += '[{}]: '.format(tot) + '\n\t' + \
-                         utili.esa_da_ba(prm, ' ')
+                         utili.stringa_da_ba(prm, ' ')
         else:
-            risul += '????: ' + '\n\t' + utili.esa_da_ba(cosa, ' ')
+            risul += '????: ' + '\n\t' + utili.stringa_da_ba(cosa, ' ')
 
         return risul
 
@@ -233,12 +233,12 @@ class PROTO_TX(PROTO):
 
             if tot != len(prm):
                 risul += 'ERR DIM [{} != {}]: '.format(tot, len(
-                    prm)) + '\n\t' + utili.esa_da_ba(prm, ' ')
+                    prm)) + '\n\t' + utili.stringa_da_ba(prm, ' ')
             else:
                 risul += '[{}]: '.format(tot) + '\n\t' + \
-                         utili.esa_da_ba(prm, ' ')
+                         utili.stringa_da_ba(prm, ' ')
         else:
-            risul += '????: ' + '\n\t' + utili.esa_da_ba(cosa, ' ')
+            risul += '????: ' + '\n\t' + utili.stringa_da_ba(cosa, ' ')
 
         return risul
 

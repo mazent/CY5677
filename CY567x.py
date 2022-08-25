@@ -1,7 +1,6 @@
 """
 manages two cypress dongles: CY5677 and CY5670 (old)
 """
-import datetime
 import queue
 import struct
 import threading
@@ -203,6 +202,7 @@ class CY567x(threading.Thread):
     Cmd_Set_Scan_Parameters_Api = 0xFE8B
     Cmd_Set_Connection_Parameters_Api = GAP_GROUP + 9
     Cmd_Get_Connection_Parameters_Api = GAP_GROUP + 8
+    Cmd_Clear_White_List_Api=0xFE92
     Cmd_Start_Scan_Api = 0xFE93
     Cmd_Stop_Scan_Api = 0xFE94
     Cmd_Set_Local_Device_Security_Api = 0xFE8D
@@ -332,7 +332,7 @@ class CY567x(threading.Thread):
             self.start()
 
         except serial.SerialException as err:
-            self.diario.debug(str(err))
+            self.diario.critical(str(err))
             self.uart = None
 
     def __del__(self):
@@ -360,8 +360,6 @@ class CY567x(threading.Thread):
         cmd, status = struct.unpack('<2H', prm)
         self.diario.debug('EVT_COMMAND_STATUS: cmd={:04X} stt={}'.format(
             cmd, status))
-        # if cmd in (self.Cmd_Start_Scan_Api,
-        #            self.Cmd_Initiate_Pairing_Request_Api):
         if cmd == self.Cmd_Start_Scan_Api:
             self._close_command(cmd, status)
 
@@ -369,13 +367,7 @@ class CY567x(threading.Thread):
         cmd, status = struct.unpack('<2H', prm)
         self.diario.debug('EVT_COMMAND_COMPLETE: cmd={:04X} stt={}'.format(
             cmd, status))
-            self._close_command(cmd, status)
-        # if cmd == self.Cmd_Initiate_Pairing_Request_Api:
-        #     # the command was closed by _evt_command_status: now we must tell
-        #     # that the procedure was successfull
-        #     self.gap_auth_resul_cb(0)
-        # else:
-        #     self._close_command(cmd, status)
+        self._close_command(cmd, status)
 
     def _evt_scan_progress_result(self, prm):
         _ = struct.unpack('<H', prm[:2])
@@ -457,6 +449,10 @@ class CY567x(threading.Thread):
             99 FE command
             04 00 cyBle_connHandle
         """
+        if self.command['curr'] is None:
+            pass
+        elif self.command['curr'].are_you(self.Cmd_Initiate_Pairing_Request_Api):
+            self._close_command(self.Cmd_Initiate_Pairing_Request_Api, 0)
         self.gap_passkey_entry_request_cb()
 
     def _evt_gattc_xchng_mtu_rsp(self, prm):
@@ -721,7 +717,7 @@ class CY567x(threading.Thread):
         return True
 
     def run(self):
-        print('nasco 1')
+        self.diario.debug('run: start')
         while True:
             # any command?
             if not self._exec_command():
@@ -750,7 +746,7 @@ class CY567x(threading.Thread):
                     except KeyError:
                         self.diario.debug('PLEASE MANAGE ' +
                                           self.proto['rx'].msg_to_string(msg))
-        print('muoio 1')
+        self.diario.debug('run: end')
 
         # switch dongle to initial configuration
         cmd = _COMMAND(self.Cmd_Tool_Disconnected_Api)
@@ -954,6 +950,14 @@ class CY567x(threading.Thread):
         return self._send_command_and_wait(
             self.Cmd_Set_Scan_Parameters_Api, prm=prm)
 
+    def clear_list(self):
+        """
+        removes the bonding information of the device and removes it from the white list
+        :return: bool
+        """
+        self.diario.debug('clear_list')
+        return self._send_command_and_wait(self.Cmd_Clear_White_List_Api)
+
     def scan_start(self):
         """
         start scanning for devices
@@ -970,25 +974,31 @@ class CY567x(threading.Thread):
         self.diario.debug('scan_stop')
         return self._send_command_and_wait(self.Cmd_Stop_Scan_Api)
 
-    def set_local_device_security(self, level):
+    def set_local_device_security(self, level, bondable=False):
         """
         configure cyBle_authInfo
         :param level: '1': No Security (No Authentication & No Encryption)
                       '2': Unauthenticated pairing with encryption
                       '3': Authenticated pairing with encryption
+        :param bondable: if true and the peripheral has the ltk, the connection will fail
+                         (you should do the pairing again)
+                         TLDR
+                            if the perip has the ltk, it will not proceed with the pairing,
+                            so connect_pk will fail because of the timeout in:
+                                self.sincro['passkeyReq'].wait(to)
         :return: bool
         """
         self.diario.debug('set_local_device_security')
         if level in ('1', '2', '3'):
             # Mode 1
             security = 0x10 + int(level) - 1
-            # No bonding
-            bonding = 0
+            # Bonding
+            bonding = 1 if bondable else 0
             # 16 bit keys
             ekeySize = 16
             # this is an output
             authErr = 0
-            # no prop
+            # secure connection: bit 0: mitm, bit 1: key press
             pairingProperties = 0
             # don't force secure connections (this should be done by the perip)
             CyBle_GapSetSecureConnectionsOnlyMode = 0
@@ -1054,11 +1064,11 @@ class CY567x(threading.Thread):
                 raise utili.Problema('err pair req')
 
             if pk != 'JUST_WORKS':
-	            if not self.sincro['passkeyReq'].wait(to):
-	                raise utili.Problema("err passkeyReq")
-	
-	            if not self.pairing_passkey(int(pk)):
-	                raise utili.Problema('err pairing_passkey')
+                if not self.sincro['passkeyReq'].wait(to):
+                    raise utili.Problema("err passkeyReq")
+
+                if not self.pairing_passkey(int(pk)):
+                    raise utili.Problema('err pairing_passkey')
 
             return True
 

@@ -9,9 +9,9 @@ import threading
 import random
 import string
 import time
-# solo python 3
 import tkinter.filedialog as dialogo
 import inspect
+import serial.tools.list_ports as lp
 
 
 def validaStringa(x, dimmin=None, dimmax=None):
@@ -88,6 +88,7 @@ def validaCampo(x, mini=None, maxi=None):
 
     return esito, val
 
+
 def validaFloat(x, mini=None, maxi=None):
     """
         Se la stringa x e' un float, controlla
@@ -130,19 +131,17 @@ def validaFloat(x, mini=None, maxi=None):
 
     return esito, val
 
+
 def strVer(vn):
     """
         Converte la versione del fw in stringa
     """
 
-    vmag = vn >> 24
-    vmin = vn & 0xFFFFFF
+    vmag = (vn >> 24) & 0xFF
+    vmin = (vn >> 16) & 0xFF
+    rev = vn & 0xFFFF
 
-    ver = str(vmag)
-    ver += "."
-    ver += str(vmin)
-
-    return ver
+    return '{}.{}.{}'.format(vmag, vmin, rev)
 
 
 def verStr(vs):
@@ -258,6 +257,7 @@ class Problema(Exception):
 
     def __init__(self, msg):
         Exception.__init__(self)
+
         self.msg = msg
 
         # recupero la posizione del chiamante
@@ -321,6 +321,30 @@ class Periodico(threading.Thread):
         return self.secondi is not None
 
 
+class INTERO_ATOMICO:
+    def __init__(self, val=0):
+        self.val = val
+        self.mux = threading.Lock()
+
+    def leggi(self):
+        x = 0
+        with self.mux:
+            x = self.val
+        return x
+
+    def scrivi(self, cosa):
+        with self.mux:
+            self.val = cosa
+
+    def inc(self):
+        with self.mux:
+            self.val += 1
+
+    def dec(self):
+        with self.mux:
+            self.val -= 1
+
+
 def stampaTabulare(pos, dati, prec=4):
     """
         Stampa il bytearray dati incolonnando per 16
@@ -362,46 +386,54 @@ def byte_casuali(quanti):
         vc.append(x)
     return vc
 
-def ba_da_esa(esa, sep='-'):
+
+def numero_casuale(maxi, mini=0):
+    return random.randint(mini, maxi)
+
+
+def ba_da_stringa(stringa, sep='-', base=16):
     """
-    Converte una stringa esadecimale di tipo xx-yy-zz
+    Converte una stringa esadecimale di tipo 'xx-yy-zz'
     nel bytearray [xx, yy, zz]
-    :param esa: stringa di byte esadecimali, p.e. 'AB-CD'
+    :param stringa: stringa di byte esadecimali
     :param sep: separatore
-    :return: il bytearray, p.e. [0xAB 0xCD]
+    :return: il bytearray
     """
+    stringa = stringa.lstrip(' ')
     ba = bytearray()
-    x = esa.split(sep)
+    x = stringa.split(sep)
     try:
         for y in x:
-            ba.append(int(y, base=16))
+            ba.append(int(y, base=base))
     except ValueError:
         ba = None
 
     return ba
 
-def esa_da_ba(ba, sep='-'):
+
+def stringa_da_ba(ba, sep='-'):
     """
     Converte un bytearray [xx, yy, zz] in
     stringa esadecimale "xx-yy-zz"
     :param ba: bytearray
     :param sep: separatore
-    :return:
+    :return: string
     """
-    esa = ''
+    stringa = ''
     if len(ba) == 0:
         pass
     elif len(ba) == 1:
-        esa += '%02X' % ba[0]
+        stringa += '%02X' % ba[0]
     else:
         for i in range(len(ba) - 1):
-            esa += '%02X' % ba[i]
-            esa += sep
-        esa += '%02X' % ba[len(ba) - 1]
+            stringa += '%02X' % ba[i]
+            stringa += sep
+        stringa += '%02X' % ba[len(ba) - 1]
 
-    return esa
+    return stringa
 
-def str_da_mac(cam):
+
+def stringa_da_mac(cam):
     """
     Converte un mac (bytearray [xx, .. zz]) in
     stringa "zz:..:xx"
@@ -413,32 +445,24 @@ def str_da_mac(cam):
 
     mac = bytearray(_ for _ in reversed(cam))
 
-    esa = ''
-    for i in mac:
-        esa += '%02X' % i
-        esa += ':'
+    return stringa_da_ba(mac, ':')
 
-    return esa[:len(esa) - 1]
 
-def mac_da_str(stri):
+def mac_da_stringa(stringa):
     """
-    Converte un mac (stringa 'xx:..:zz') in
-    mac (bytearray [zz, ..., xx])
-    :param stri: bdaddr
-    :return: stringa
+    Converte una stringa 'xx:..:zz' in
+    bytearray [zz, ..., xx]
+    :param stringa: string
+    :return: bytearray
     """
-    cam = bytearray()
-    x = stri.split(':')
-    if len(x) != 6:
+    cam = ba_da_stringa(stringa, ':')
+    if cam is None:
+        return None
+    if len(cam) != 6:
         return None
 
-    try:
-        for y in x:
-            cam.append(int(y, base=16))
-        mac = bytearray(_ for _ in reversed(cam))
-        return mac
-    except ValueError:
-        return None
+    return bytearray(_ for _ in reversed(cam))
+
 
 def _cod_finto(dim):
     base = ['1', '2', '3', '4', '5', '6', '7', '8', '9']
@@ -478,6 +502,7 @@ def stringa_casuale(dim):
     base = string.ascii_uppercase + string.ascii_lowercase + string.digits
     return ''.join(random.choice(base) for _ in range(dim))
 
+
 class CRONOMETRO():
     def __init__(self):
         self.inizio = 0
@@ -489,6 +514,7 @@ class CRONOMETRO():
     def durata(self):
         return self.tempo() - self.inizio
 
+
 class LOGGA:
     # Lo script principale inizializza, p.e.:
     #     logging.basicConfig(
@@ -497,6 +523,7 @@ class LOGGA:
     #         format='%(asctime)s - %(levelname)s - %(message)s')
     #     logging.getLogger().addHandler(logging.StreamHandler())
     # Tutti istanziano questa classe e usano i suoi metodi
+    #     self.diario = utili.LOGGA(__main__ if logga else None)
 
     def __init__(self, logger=None):
         if logger is None:
@@ -543,6 +570,9 @@ class LOGGA:
 
             self.logger.critical(msg)
 
+
+# p.e.: nomefile = utili.scegli_file_esistente(self.master, [('expander',
+# '.cyacd')])
 def scegli_file_esistente(master, filetypes):
     opzioni = {
         'parent': master,
@@ -564,7 +594,7 @@ def scegli_file_esistente(master, filetypes):
 def girino(x):
     _girino = ['-', '\\', '|', '/', '*']
     if x % 1000 == 0:
-        print('\b.')
+        print('\bK')
     elif x % 10 == 0:
         print('\b. ', end='', flush=True)
     else:
@@ -573,6 +603,10 @@ def girino(x):
 
 def seconds_since_the_epoch():
     return int(time.time())
+
+
+def seconds_since_the_epoch_float():
+    return round(time.time(), 3)
 
 
 def brokendown_time(epoch):
@@ -587,10 +621,73 @@ def brokendown_time(epoch):
     }
 
 
+def lista_seriali():
+    diz = {}
+    lista = lp.comports()
+    for elem in lista:
+        desc = elem.description
+        if elem.device in desc:
+            pos = desc.find(elem.device)
+            desc = desc[:pos - 1].strip()
+
+        if elem.vid is None:
+            diz[elem.device] = (desc,)
+        else:
+            manuf = '?'
+            if elem.manufacturer is not None:
+                manuf = elem.manufacturer.strip()
+            diz[elem.device] = (desc, manuf, elem.vid, elem.pid)
+    return diz
+
+
+def slip(secondi):
+    time.sleep(secondi)
+
+
+def lettera_anno(anno: int):
+    # vedi https://en.wikipedia.org/wiki/Vehicle_identification_number
+    LA = {
+        2010: 'A',
+        2011: 'B',
+        2012: 'C',
+        2013: 'D',
+        2014: 'E',
+        2015: 'F',
+        2016: 'G',
+        2017: 'H',
+        2018: 'J',
+        2019: 'K',
+        2020: 'L',
+        2021: 'M',
+        2022: 'N',
+        2023: 'P',
+        2024: 'R',
+        2025: 'S',
+        2026: 'T',
+        2027: 'V',
+        2028: 'W',
+        2029: 'X',
+        2030: 'Y',
+        2031: '1',
+        2032: '2',
+        2033: '3',
+        2034: '4',
+        2035: '5',
+        2036: '6',
+        2037: '7',
+        2038: '8',
+        2039: '9',
+    }
+    try:
+        return LA[anno]
+    except KeyError:
+        return '?'
+
+
 if __name__ == '__main__':
-    for z in range(23):
-        girino(z+1)
-        time.sleep(.1)
+    for z in range(10):
+        girino(z)
+        time.sleep(.2)
     # MILLISEC = 123456789.34
     # print(gomsm((MILLISEC,), (1000, 60, 60, 24)))
     # print(stampaDurata(MILLISEC))
