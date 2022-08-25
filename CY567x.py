@@ -1471,7 +1471,7 @@ class CY567x(threading.Thread):
                    'security', 'bonding', 'ekeySize', 'pairingProperties'
         :return: n.a.
         """
-        self.diario.debug(str(ai))
+        self.diario.debug('gap_auth_req_cb: ' + str(ai))
         self.sincro['authReq'].set()
 
     def gap_passkey_entry_request_cb(self):
