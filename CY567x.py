@@ -186,7 +186,7 @@ class CY567x(threading.Thread):
     """
     # internal commands
     QUIT = 0xE5C1
-    ABORT_CURRENT_COMMAND = 0xACC0
+    ABORT_COMMAND = 0xABC0
     # 3 bits group + 7 bits id
     GENERAL_GROUP = 0 << 7
     L2CAP_GROUP = 2 << 7
@@ -202,7 +202,7 @@ class CY567x(threading.Thread):
     Cmd_Set_Scan_Parameters_Api = 0xFE8B
     Cmd_Set_Connection_Parameters_Api = GAP_GROUP + 9
     Cmd_Get_Connection_Parameters_Api = GAP_GROUP + 8
-    Cmd_Clear_White_List_Api=0xFE92
+    Cmd_Clear_White_List_Api = 0xFE92
     Cmd_Start_Scan_Api = 0xFE93
     Cmd_Stop_Scan_Api = 0xFE94
     Cmd_Set_Local_Device_Security_Api = 0xFE8D
@@ -301,6 +301,7 @@ class CY567x(threading.Thread):
         self.command = {
             'curr': None,
             'todo': queue.Queue(),
+            'wait': {},
             'poll': poll,
         }
 
@@ -332,7 +333,7 @@ class CY567x(threading.Thread):
             self.start()
 
         except serial.SerialException as err:
-            self.diario.critical(str(err))
+            self.diario.debug(str(err))
             self.uart = None
 
     def __del__(self):
@@ -340,28 +341,78 @@ class CY567x(threading.Thread):
         self.close()
 
     def _close_command(self, cod, resul):
+        trovato = False
         if self.command['curr'] is None:
-            self.diario.debug('no cmd waiting')
+            pass
         elif self.command['curr'].are_you(cod):
+            trovato = True
+            self.diario.info('curr _close_command({:04X},{})'.format(cod, resul))
             self.command['curr'].set_result(resul == 0)
             self.command['curr'] = None
         else:
-            self.diario.debug('wrong cmd')
+            pass
+
+        if not trovato:
+            if cod in self.command['wait']:
+                cmd = self.command['wait'][cod]
+                del self.command['wait'][cod]
+                self.diario.info('wait _close_command({:04X},{})'.format(cod, resul))
+                cmd.set_result(resul == 0)
+            else:
+                self.diario.error('wrong cmd ({:04X})'.format(cod))
+
+    def _wait_command(self, cod, resul):
+        if self.command['curr'] is None:
+            self.diario.error('no cmd waiting')
+        elif self.command['curr'].are_you(cod):
+            self.diario.info('_wait_command {:04X}'.format(cod))
+            self.command['wait'][cod] = self.command['curr']
+            self.command['curr'] = None
+        else:
+            self.diario.error('wrong cmd ({:04X})'.format(cod))
+
+    def _abort_command(self, cod):
+        trovato = False
+        if self.command['curr'] is None:
+            pass
+        elif self.command['curr'].are_you(cod):
+            trovato = True
+            self.diario.info('curr _abort_command({:04X})'.format(cod))
+            self.command['curr'] = None
+        else:
+            pass
+
+        if not trovato:
+            if cod in self.command['wait']:
+                self.diario.info('wait _abort_command({:04X})'.format(cod))
+                del self.command['wait'][cod]
+            else:
+                self.diario.error('wrong cmd ({:04X})'.format(cod))
 
     def _save_data(self, cod, data):
+        trovato = False
         if self.command['curr'] is None:
-            self.diario.debug('_save_data: no cmd waiting')
+            pass
         elif self.command['curr'].are_you(cod):
+            trovato = True
             self.command['curr'].save(data)
         else:
-            self.diario.debug('_save_data: wrong cmd {:04X}'.format(cod))
+            pass
+
+        if not trovato:
+            if cod in self.command['wait']:
+                self.command['wait'][cod].save(data)
+            else:
+                self.diario.error('wrong cmd ({:04X})'.format(cod))
 
     def _evt_command_status(self, prm):
-        cmd, status = struct.unpack('<2H', prm)
+        cod, status = struct.unpack('<2H', prm)
         self.diario.debug('EVT_COMMAND_STATUS: cmd={:04X} stt={}'.format(
-            cmd, status))
-        if cmd == self.Cmd_Start_Scan_Api:
-            self._close_command(cmd, status)
+            cod, status))
+        if cod == self.Cmd_Start_Scan_Api:
+            self._close_command(cod, status)
+        else:
+            self._wait_command(cod, status)
 
     def _evt_command_complete(self, prm):
         cmd, status = struct.unpack('<2H', prm)
@@ -449,10 +500,11 @@ class CY567x(threading.Thread):
             99 FE command
             04 00 cyBle_connHandle
         """
-        if self.command['curr'] is None:
-            pass
-        elif self.command['curr'].are_you(self.Cmd_Initiate_Pairing_Request_Api):
-            self._close_command(self.Cmd_Initiate_Pairing_Request_Api, 0)
+        # if self.command['curr'] is None:
+        #     pass
+        # elif self.command['curr'].are_you(self.Cmd_Initiate_Pairing_Request_Api):
+        #     self._close_command(self.Cmd_Initiate_Pairing_Request_Api, 0)
+        self._close_command(self.Cmd_Initiate_Pairing_Request_Api, 0)
         self.gap_passkey_entry_request_cb()
 
     def _evt_gattc_xchng_mtu_rsp(self, prm):
@@ -464,7 +516,8 @@ class CY567x(threading.Thread):
         """
         _, _, mtu = struct.unpack('<3H', prm)
         self.connection['mtu'] = mtu
-        self.diario.debug('EVT_EXCHANGE_GATT_MTU_SIZE_RESPONSE: mtu={}'.format(mtu))
+        self.diario.debug(
+            'EVT_EXCHANGE_GATT_MTU_SIZE_RESPONSE: mtu={}'.format(mtu))
 
     def _evt_gap_auth_failed(self, prm):
         """
@@ -557,8 +610,11 @@ class CY567x(threading.Thread):
         0E    GattErrResp->errorCode
         """
         cmd, _, pdu, _, error = struct.unpack('<2HBHB', prm)
-        self.diario.debug('EVT_GATT_ERROR_NOTIFICATION ' + cc.quale_pdu(pdu) + ' ' +
-                          cc.quale_errore(error))
+        self.diario.debug(
+            'EVT_GATT_ERROR_NOTIFICATION ' +
+            cc.quale_pdu(pdu) +
+            ' ' +
+            cc.quale_errore(error))
         if cmd in (self.Cmd_Discover_All_Primary_Services_Api,
                    self.Cmd_Discover_Primary_Services_By_Uuid_Api,
                    self.Cmd_Discover_All_Characteristics_Api):
@@ -684,7 +740,7 @@ class CY567x(threading.Thread):
         if res is None:
             # abort
             self.command['todo'].put_nowait(
-                _COMMAND(self.ABORT_CURRENT_COMMAND))
+                _COMMAND(self.ABORT_COMMAND, cod))
             return False
 
         return res
@@ -696,19 +752,25 @@ class CY567x(threading.Thread):
             if cmd.are_you(self.QUIT):
                 return False
 
-            if cmd.are_you(self.ABORT_CURRENT_COMMAND):
-                self.command['curr'] = None
-                raise utili.Problema('abort')
+            if cmd.are_you(self.ABORT_COMMAND):
+                prm = cmd.get()
+                self._abort_command(prm['prm'])
+                return True
 
             if self.command['curr'] is None:
+                self.diario.info('tx {:04X}'.format(cmd.get()['cod']))
                 self.command['curr'] = cmd
 
                 msg = self.proto['tx'].compose(cmd.get())
 
-                self.diario.debug('IRP_MJ_WRITE Data: ' + utili.stringa_da_ba(msg, ' '))
+                self.diario.debug(
+                    'IRP_MJ_WRITE Data: ' +
+                    utili.stringa_da_ba(
+                        msg,
+                        ' '))
                 self.uart.write(msg)
             else:
-                # busy
+                self.diario.info('busy')
                 self.command['todo'].put_nowait(cmd)
         except (utili.Problema, queue.Empty) as err:
             if isinstance(err, utili.Problema):
@@ -717,7 +779,6 @@ class CY567x(threading.Thread):
         return True
 
     def run(self):
-        self.diario.debug('run: start')
         while True:
             # any command?
             if not self._exec_command():
@@ -730,7 +791,11 @@ class CY567x(threading.Thread):
                 if len(tmp) == 0:
                     break
 
-                self.diario.debug('IRP_MJ_READ Data: ' + utili.stringa_da_ba(tmp, ' '))
+                self.diario.debug(
+                    'IRP_MJ_READ Data: ' +
+                    utili.stringa_da_ba(
+                        tmp,
+                        ' '))
                 self.proto['rx'].examine(tmp)
 
             # any message?
@@ -746,13 +811,16 @@ class CY567x(threading.Thread):
                     except KeyError:
                         self.diario.debug('PLEASE MANAGE ' +
                                           self.proto['rx'].msg_to_string(msg))
-        self.diario.debug('run: end')
 
         # switch dongle to initial configuration
         cmd = _COMMAND(self.Cmd_Tool_Disconnected_Api)
         msg = self.proto['tx'].compose(cmd.get())
 
-        self.diario.debug('IRP_MJ_WRITE Data: ' + utili.stringa_da_ba(msg, ' '))
+        self.diario.debug(
+            'IRP_MJ_WRITE Data: ' +
+            utili.stringa_da_ba(
+                msg,
+                ' '))
         self.uart.write(msg)
 
     def close(self):
@@ -847,11 +915,22 @@ class CY567x(threading.Thread):
         connIntvMax = int(cp['connIntvMax'] / 1.25)
         supervisionTO = int(cp['supervisionTO'] / 10.0)
 
-        prm = bytearray(struct.pack('<HHB', cp['scanIntv'], cp['scanWindow'], cp['initiatorFilterPolicy']))
+        prm = bytearray(
+            struct.pack(
+                '<HHB',
+                cp['scanIntv'],
+                cp['scanWindow'],
+                cp['initiatorFilterPolicy']))
         prm += cp['peerBdAddr']
-        prm += struct.pack(
-            '<BBHHHHHH', cp['peerAddrType'], cp['ownAddrType'], connIntvMin, connIntvMax, cp['connLatency'],
-            supervisionTO, cp['minCeLength'], cp['maxCeLength'])
+        prm += struct.pack('<BBHHHHHH',
+                           cp['peerAddrType'],
+                           cp['ownAddrType'],
+                           connIntvMin,
+                           connIntvMax,
+                           cp['connLatency'],
+                           supervisionTO,
+                           cp['minCeLength'],
+                           cp['maxCeLength'])
 
         return self._send_command_and_wait(
             self.Cmd_Set_Connection_Parameters_Api, prm=prm)
@@ -871,8 +950,9 @@ class CY567x(threading.Thread):
             rsp = rsp[5:]
             peerBdAddr = rsp[:6]
             rsp = rsp[6:]
-            peerAddrType, ownAddrType, connIntvMin, connIntvMax, connLatency, supervisionTO, minCeLength, maxCeLength = struct.unpack(
-                '<BBHHHHHH', rsp)
+            peerAddrType, ownAddrType, \
+            connIntvMin, connIntvMax, connLatency, \
+            supervisionTO, minCeLength, maxCeLength = struct.unpack('<BBHHHHHH', rsp)
 
             # converto solo quello che uso (per adesso)
             return {
@@ -1043,7 +1123,7 @@ class CY567x(threading.Thread):
         # only one device at a time
         return False
 
-    def connect_pk(self, bda: str, pk: str, public=True, to=20) -> bool:
+    def connect_pk(self, bda: str, pk: str, public=True, clearlist=True, to=20) -> bool:
         """
         connect to a device that will request pairing (legacy passkey or just works)
         :param bda: mac address
@@ -1053,6 +1133,10 @@ class CY567x(threading.Thread):
         try:
             self.sincro['authReq'].clear()
             self.sincro['passkeyReq'].clear()
+
+            if clearlist:
+                if not self.clear_list():
+                    raise utili.Problema('err clear_list')
 
             if not self.connect(bda, public):
                 raise utili.Problema('Connessione: ERRORE')
@@ -1456,8 +1540,10 @@ class CY567x(threading.Thread):
         """
         if self.connection['cyBle_connHandle'] is not None:
             self.diario.debug('pairing_passkey({})'.format(pk))
-            prm = struct.pack('<HIB', self.connection['cyBle_connHandle'], pk, 1)
-            return self._send_command_and_wait(self.Cmd_Pairing_PassKey_Api, prm=prm)
+            prm = struct.pack(
+                '<HIB', self.connection['cyBle_connHandle'], pk, 1)
+            return self._send_command_and_wait(
+                self.Cmd_Pairing_PassKey_Api, prm=prm)
 
         return False
 
@@ -1515,8 +1601,11 @@ class CY567x(threading.Thread):
         :param ntf: notification (bytearray)
         :return: n.a.
         """
-        self.diario.debug('gattc_handle_value_ntf_cb: handle:{:04X} '.format(crt) +
-                          utili.stringa_da_ba(ntf, ' '))
+        self.diario.debug(
+            'gattc_handle_value_ntf_cb: handle:{:04X} '.format(crt) +
+            utili.stringa_da_ba(
+                ntf,
+                ' '))
 
     def gattc_handle_value_ind_cb(self, crt, result, ind):
         """
@@ -1526,8 +1615,13 @@ class CY567x(threading.Thread):
         :param ind: bytearray
         :return: n.a.
         """
-        self.diario.debug('gattc_handle_value_ind_cb: handle:{:04X} confirm={}'.
-                          format(crt, result) + utili.stringa_da_ba(ind, ' '))
+        self.diario.debug(
+            'gattc_handle_value_ind_cb: handle:{:04X} confirm={}'.format(
+                crt,
+                result) +
+            utili.stringa_da_ba(
+                ind,
+                ' '))
 
 
 if __name__ == '__main__':

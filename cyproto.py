@@ -129,7 +129,6 @@ class PROTO:
         elif start:
             empty_partial()
 
-
     def examine(self, questi):
         for cosa in questi:
             self.stati[self.stato](cosa)
@@ -141,7 +140,6 @@ class PROTO_RX(PROTO):
     """
     specialization for messages received from CY5677
     """
-
 
     def __init__(self):
         PROTO.__init__(self, 'RX', 0xBD, 0xA7)
@@ -186,6 +184,10 @@ class PROTO_RX(PROTO):
             if tot != len(prm):
                 risul += 'ERR DIM [{} != {}]: '.format(
                     tot, len(prm)) + '\n\t' + utili.stringa_da_ba(prm, ' ')
+            elif 'EVT_COMMAND_STATUS' in risul or 'EVT_COMMAND_COMPLETE' in risul:
+                cmd = struct.unpack('<H', prm[:2])[0]
+                risul += '{:04X} [{}]: '.format(cmd, tot) + '\n\t' + \
+                         utili.stringa_da_ba(prm, ' ')
             else:
                 risul += '[{}]: '.format(tot) + '\n\t' + \
                          utili.stringa_da_ba(prm, ' ')
@@ -221,7 +223,6 @@ class PROTO_TX(PROTO):
     def _dim_pkt(self):
         _, tot = struct.unpack('<2H', self.partial[:4])
         return tot + 4
-
 
     def msg_to_string(self, cosa):
         risul = self.name + ' '
