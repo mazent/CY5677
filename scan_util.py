@@ -115,18 +115,21 @@ def scan_advertise(data):
     while len(data):
         # structure length
         slen = data.pop(0)
-        if slen:
-            # structure data
-            sdata = data[:slen]
-            # next structures
-            data = data[slen:]
+        # structure data
+        if slen == 0:
+            break
+        if len(data) < slen:
+            break
+        sdata = data[:slen]
+        # next structures
+        data = data[slen:]
 
-            # structure type
-            stype = sdata.pop(0)
-            try:
-                adv.append(_ADV_TYPE[stype](sdata))
-            except KeyError:
-                adv.append(('???', stype, sdata))
+        # structure type
+        stype = sdata.pop(0)
+        try:
+            adv.append(_ADV_TYPE[stype](sdata))
+        except KeyError:
+            adv.append(('???', stype, sdata))
     return adv
 
 
